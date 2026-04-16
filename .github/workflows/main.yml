@@ -60,6 +60,8 @@ jobs:
           --onefile `
           $iconArg `
           --add-data "scanner;scanner" `
+          --add-data "src\ui;ui" `
+          --add-data "src\utils;utils" `
           --hidden-import=cv2 `
           --hidden-import=cv2.data `
           --hidden-import=PyQt6 `
