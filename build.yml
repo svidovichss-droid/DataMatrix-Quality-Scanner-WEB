@@ -1,0 +1,77 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install system dependencies
+      run: |
+        choco install -y vcredist140
+        # Установка libdmtx для Windows
+        pip install --upgrade pip
+        
+    - name: Install Python dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pyinstaller
+        
+    - name: Build EXE
+      run: |
+        pyinstaller `
+          --name "DM-Quality-Scanner" `
+          --windowed `
+          --onefile `
+          --icon=assets/icon.ico `
+          --add-data "assets;assets" `
+          --hidden-import=cv2 `
+          --hidden-import=PyQt6 `
+          --hidden-import=pylibdmtx `
+          --hidden-import=pylibdmtx.pylibdmtx `
+          --collect-all PyQt6 `
+          --collect-all cv2 `
+          --paths src `
+          src/main.py
+          
+    - name: Create distribution
+      run: |
+        mkdir dist\DM-Quality-Scanner-Portable
+        cp dist\DM-Quality-Scanner.exe dist\DM-Quality-Scanner-Portable\
+        cp README.md dist\DM-Quality-Scanner-Portable\
+        cp -r assets dist\DM-Quality-Scanner-Portable\ 2>$null || echo "No assets folder"
+        
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: DM-Quality-Scanner-Windows
+        path: dist/DM-Quality-Scanner-Portable
+        
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          dist/DM-Quality-Scanner.exe
+          dist/DM-Quality-Scanner-Portable.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Zip portable version
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        Compress-Archive -Path dist\DM-Quality-Scanner-Portable\* -DestinationPath dist\DM-Quality-Scanner-Portable.zip
