@@ -16,62 +16,97 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+        cache: 'pip'
         
     - name: Install system dependencies
       run: |
-        choco install -y vcredist140
-        # Установка libdmtx для Windows
+        choco install -y vcredist140 --no-progress
         pip install --upgrade pip
         
     - name: Install Python dependencies
       run: |
         pip install -r requirements.txt
-        pip install pyinstaller
+        pip install pyinstaller>=6.0.0
+        
+    - name: Create assets directory
+      run: |
+        mkdir -p assets
+        echo "Placeholder" > assets/.gitkeep
         
     - name: Build EXE
       run: |
+        $iconPath = "assets/icon.ico"
+        if (Test-Path $iconPath) {
+          $iconArg = "--icon=$iconPath"
+        } else {
+          $iconArg = ""
+        }
+        
         pyinstaller `
           --name "DM-Quality-Scanner" `
           --windowed `
           --onefile `
-          --icon=assets/icon.ico `
+          $iconArg `
+          --add-data "src;src" `
           --add-data "assets;assets" `
           --hidden-import=cv2 `
           --hidden-import=PyQt6 `
           --hidden-import=pylibdmtx `
           --hidden-import=pylibdmtx.pylibdmtx `
+          --hidden-import=ui.main_window `
+          --hidden-import=utils.config `
           --collect-all PyQt6 `
           --collect-all cv2 `
-          --paths src `
           src/main.py
-          
+      
+    - name: Verify build
+      run: |
+        if (Test-Path "dist\DM-Quality-Scanner.exe") {
+          Write-Host "Build successful!"
+          Get-Item "dist\DM-Quality-Scanner.exe" | Select-Object Name, Length
+        } else {
+          Write-Error "Build failed - EXE not found"
+          exit 1
+        }
+        
     - name: Create distribution
       run: |
-        mkdir dist\DM-Quality-Scanner-Portable
-        cp dist\DM-Quality-Scanner.exe dist\DM-Quality-Scanner-Portable\
-        cp README.md dist\DM-Quality-Scanner-Portable\
-        cp -r assets dist\DM-Quality-Scanner-Portable\ 2>$null || echo "No assets folder"
+        New-Item -ItemType Directory -Force -Path "dist\DM-Quality-Scanner-Portable"
+        Copy-Item "dist\DM-Quality-Scanner.exe" "dist\DM-Quality-Scanner-Portable\"
+        Copy-Item "README.md" "dist\DM-Quality-Scanner-Portable\"
+        if (Test-Path "assets") {
+          Copy-Item -Recurse "assets" "dist\DM-Quality-Scanner-Portable\"
+        }
         
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: DM-Quality-Scanner-Windows
         path: dist/DM-Quality-Scanner-Portable
+        retention-days: 30
         
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: |
           dist/DM-Quality-Scanner.exe
-          dist/DM-Quality-Scanner-Portable.zip
+        generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
     - name: Zip portable version
       if: startsWith(github.ref, 'refs/tags/')
       run: |
-        Compress-Archive -Path dist\DM-Quality-Scanner-Portable\* -DestinationPath dist\DM-Quality-Scanner-Portable.zip
+        Compress-Archive -Path "dist\DM-Quality-Scanner-Portable\*" -DestinationPath "dist\DM-Quality-Scanner-Portable.zip" -Force
+        
+    - name: Upload release asset
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/DM-Quality-Scanner-Portable.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

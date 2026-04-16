@@ -1,0 +1,30 @@
+```
+# Logs and temp files
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.julia/
+zig*/
+julia-*/
+
+# Build artifacts
+build/
+dist/
+target/
+.gradle/
+```
