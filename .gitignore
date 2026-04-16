@@ -1,6 +1,20 @@
 ```
+# Compiled and build artifacts
+*.pyc
+__pycache__/
+
+# Dependencies
+.venv/
+venv/
+node_modules/
+dist/
+build/
+target/
+
 # Logs and temp files
 *.log
+*.tmp
+*.swp
 
 # Environment
 .env
@@ -11,20 +25,12 @@
 .vscode/
 .idea/
 
-# Dependencies
-node_modules/
-.venv/
-venv/
-__pycache__/
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# Python cache
 .mypy_cache/
 .pytest_cache/
-.julia/
-zig*/
-julia-*/
-
-# Build artifacts
-build/
-dist/
-target/
-.gradle/
 ```

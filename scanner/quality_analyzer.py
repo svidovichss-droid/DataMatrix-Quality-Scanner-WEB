@@ -11,7 +11,11 @@ import os
 from pathlib import Path
 import logging
 
-from .datamatrix_decoder import DataMatrixDecoder, DataMatrixVerifier
+# Исправленные импорты для совместимости с PyInstaller
+try:
+    from datamatrix_decoder import DataMatrixDecoder, DataMatrixVerifier
+except ImportError:
+    from scanner.datamatrix_decoder import DataMatrixDecoder, DataMatrixVerifier
 
 logger = logging.getLogger(__name__)
 
