@@ -15,7 +15,10 @@ import logging
 try:
     from datamatrix_decoder import DataMatrixDecoder, DataMatrixVerifier
 except ImportError:
-    from scanner.datamatrix_decoder import DataMatrixDecoder, DataMatrixVerifier
+    try:
+        from scanner.datamatrix_decoder import DataMatrixDecoder, DataMatrixVerifier
+    except ImportError:
+        from src.scanner.datamatrix_decoder import DataMatrixDecoder, DataMatrixVerifier
 
 logger = logging.getLogger(__name__)
 

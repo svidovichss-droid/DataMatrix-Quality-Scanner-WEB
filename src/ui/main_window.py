@@ -24,9 +24,14 @@ try:
     from scanner.quality_analyzer import ConveyorAnalyzer, InspectionResult
     from utils.config import GOSTConfig, AppConfig
 except ImportError:
-    from src.scanner.camera_capture import CameraCapture, CameraConfig
-    from src.scanner.quality_analyzer import ConveyorAnalyzer, InspectionResult
-    from src.utils.config import GOSTConfig, AppConfig
+    try:
+        from src.scanner.camera_capture import CameraCapture, CameraConfig
+        from src.scanner.quality_analyzer import ConveyorAnalyzer, InspectionResult
+        from src.utils.config import GOSTConfig, AppConfig
+    except ImportError:
+        from camera_capture import CameraCapture, CameraConfig
+        from quality_analyzer import ConveyorAnalyzer, InspectionResult
+        from config import GOSTConfig, AppConfig
 
 logger = logging.getLogger(__name__)
 
