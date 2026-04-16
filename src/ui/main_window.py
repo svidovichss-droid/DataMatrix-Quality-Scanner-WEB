@@ -18,9 +18,15 @@ from datetime import datetime
 from typing import Optional
 import json
 
-from ..scanner.camera_capture import CameraCapture, CameraConfig
-from ..scanner.quality_analyzer import ConveyorAnalyzer, InspectionResult
-from ..utils.config import GOSTConfig, AppConfig
+# Исправленные импорты для совместимости с PyInstaller
+try:
+    from scanner.camera_capture import CameraCapture, CameraConfig
+    from scanner.quality_analyzer import ConveyorAnalyzer, InspectionResult
+    from utils.config import GOSTConfig, AppConfig
+except ImportError:
+    from src.scanner.camera_capture import CameraCapture, CameraConfig
+    from src.scanner.quality_analyzer import ConveyorAnalyzer, InspectionResult
+    from src.utils.config import GOSTConfig, AppConfig
 
 logger = logging.getLogger(__name__)
 
