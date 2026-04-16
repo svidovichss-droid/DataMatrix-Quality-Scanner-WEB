@@ -54,34 +54,23 @@ jobs:
         
         Write-Host "Building with arguments: $iconArg"
         
-        pyinstaller `
-          --name "DM-Quality-Scanner" `
-          --windowed `
-          --onefile `
-          $iconArg `
-          --add-data "scanner;scanner" `
-          --add-data "src\ui;ui" `
-          --add-data "src\utils;utils" `
-          --hidden-import=cv2 `
-          --hidden-import=cv2.data `
-          --hidden-import=PyQt6 `
-          --hidden-import=PyQt6.QtCore `
-          --hidden-import=PyQt6.QtGui `
-          --hidden-import=PyQt6.QtWidgets `
-          --hidden-import=pylibdmtx `
-          --hidden-import=pylibdmtx.pylibdmtx `
-          --hidden-import=numpy `
-          --hidden-import=PIL `
-          --hidden-import=PIL.Image `
-          --hidden-import=scanner.camera_capture `
-          --hidden-import=scanner.quality_analyzer `
-          --hidden-import=scanner.datamatrix_decoder `
-          --hidden-import=utils.config `
-          --hidden-import=ui.main_window `
-          --collect-all PyQt6 `
-          --collect-all cv2 `
-          --collect-all PIL `
-          src/main.py
+        $pyinstallerArgs = @(
+          "--name", "DM-Quality-Scanner",
+          "--windowed",
+          "--onefile",
+          "--add-data", "scanner;scanner",
+          "--add-data", "src\ui;ui",
+          "--add-data", "src\utils;utils"
+        )
+        
+        if ($iconArg) {
+          $pyinstallerArgs += $iconArg
+        }
+        
+        $pyinstallerArgs += "src/main.py"
+        
+        Write-Host "Running: pyinstaller $($pyinstallerArgs -join ' ')"
+        & pyinstaller @pyinstallerArgs
         
         Write-Host "Build completed"
 
