@@ -1,0 +1,321 @@
+"""Декодирование и верификация Data Matrix"""
+
+import cv2
+import numpy as np
+from pylibdmtx.pylibdmtx import decode
+from typing import List, Dict, Optional, Tuple
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class DataMatrixDecoder:
+    """Декодер Data Matrix с поддержкой ECC 200"""
+    
+    def __init__(self, timeout_ms: int = 500):
+        self.timeout_ms = timeout_ms
+        self.decoded_history: List[Dict] = []
+        
+    def decode_frame(self, frame: np.ndarray) -> List[Dict]:
+        """
+        Декодирование Data Matrix из кадра
+        
+        Returns:
+            Список найденных кодов с метаданными
+        """
+        # Предобработка для улучшения декодирования
+        preprocessed = self._preprocess(frame)
+        
+        # Попытка декодирования с разными препроцессорами
+        results = []
+        
+        for img in [frame, preprocessed, cv2.bitwise_not(frame)]:
+            decoded = decode(
+                img,
+                timeout=self.timeout_ms,
+                max_count=10,
+                shrink=1
+            )
+            
+            for item in decoded:
+                result = {
+                    'data': item.data.decode('utf-8'),
+                    'rect': (item.rect.left, item.rect.top, 
+                            item.rect.width, item.rect.height),
+                    'confidence': getattr(item, 'quality', 0),
+                    'polygon': self._get_polygon(item),
+                    'timestamp': cv2.getTickCount()
+                }
+                if result not in results:
+                    results.append(result)
+                    
+        return results
+    
+    def _preprocess(self, frame: np.ndarray) -> np.ndarray:
+        """Предобработка изображения"""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+        
+        # Адаптивная бинаризация
+        binary = cv2.adaptiveThreshold(
+            gray, 255, 
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, 11, 2
+        )
+        
+        return binary
+    
+    def _get_polygon(self, decoded_item) -> np.ndarray:
+        """Получение полигона из decoded item"""
+        rect = decoded_item.rect
+        return np.array([
+            [rect.left, rect.top],
+            [rect.left + rect.width, rect.top],
+            [rect.left + rect.width, rect.top + rect.height],
+            [rect.left, rect.top + rect.height]
+        ], dtype=np.int32)
+
+
+class DataMatrixVerifier:
+    """Верификация Data Matrix по ISO/IEC 15415 (ГОСТ Р 57302-2016)"""
+    
+    GRADE_THRESHOLDS = {
+        4.0: 'A', 3.5: 'A',
+        3.0: 'B', 2.5: 'B',
+        2.0: 'C', 1.5: 'C',
+        1.0: 'D', 0.5: 'D',
+        0.0: 'F'
+    }
+    
+    def __init__(self):
+        self.reference_aperture = 0.25  # mm (стандартное значение)
+        
+    def verify(self, frame: np.ndarray, barcode_region: np.ndarray) -> Dict:
+        """
+        Полная верификация символа по ГОСТ
+        
+        Returns:
+            Dict с оценками по всем параметрам
+        """
+        gray = cv2.cvtColor(barcode_region, cv2.COLOR_BGR2GRAY) if len(barcode_region.shape) == 3 else barcode_region
+        
+        results = {
+            'decode': self._check_decode(barcode_region),
+            'symbol_contrast': self._check_symbol_contrast(gray),
+            'min_reflectance': self._check_min_reflectance(gray),
+            'min_edge_contrast': self._check_min_edge_contrast(gray),
+            'modulation': self._check_modulation(gray),
+            'defects': self._check_defects(gray),
+            'decodability': self._check_decodability(gray),
+        }
+        
+        # Расчет общей оценки (minimum of all)
+        min_grade = min(r['grade'] for r in results.values())
+        results['overall'] = {
+            'grade': min_grade,
+            'grade_letter': self._grade_to_letter(min_grade),
+            'passed': min_grade >= 2.0
+        }
+        
+        return results
+    
+    def _check_decode(self, region: np.ndarray) -> Dict:
+        """Проверка декодирования"""
+        decoder = DataMatrixDecoder(timeout_ms=1000)
+        results = decoder.decode_frame(region)
+        
+        decoded = len(results) > 0
+        grade = 4.0 if decoded else 0.0
+        
+        return {
+            'value': 1.0 if decoded else 0.0,
+            'grade': grade,
+            'passed': decoded,
+            'details': f"Decoded: {results[0]['data'] if results else 'Failed'}"
+        }
+    
+    def _check_symbol_contrast(self, gray: np.ndarray) -> Dict:
+        """Контраст символа (SC)"""
+        # Разделение на модули и расчет контраста
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+        
+        # Находим пики для темных и светлых областей
+        dark_peak = np.argmax(hist[:128])
+        light_peak = np.argmax(hist[128:]) + 128
+        
+        sc = light_peak - dark_peak
+        
+        # Оценка по ГОСТ
+        if sc >= 70: grade = 4.0
+        elif sc >= 55: grade = 3.0
+        elif sc >= 40: grade = 2.0
+        elif sc >= 20: grade = 1.0
+        else: grade = 0.0
+        
+        return {
+            'value': float(sc),
+            'grade': grade,
+            'passed': grade >= 2.0,
+            'details': f"SC = {sc:.1f}%"
+        }
+    
+    def _check_min_reflectance(self, gray: np.ndarray) -> Dict:
+        """Минимальная отражаемость (Rmin)"""
+        min_refl = np.min(gray)
+        max_refl = np.max(gray)
+        
+        # Rmin должен быть <= 0.5 * SC
+        sc = max_refl - min_refl
+        threshold = 0.5 * sc
+        
+        passed = min_refl <= threshold
+        
+        if passed and min_refl < 0.1 * max_refl: grade = 4.0
+        elif passed: grade = 3.0
+        elif min_refl <= 0.6 * sc: grade = 2.0
+        elif min_refl <= 0.8 * sc: grade = 1.0
+        else: grade = 0.0
+        
+        return {
+            'value': float(min_refl),
+            'grade': grade,
+            'passed': passed,
+            'details': f"Rmin = {min_refl:.1f}"
+        }
+    
+    def _check_min_edge_contrast(self, gray: np.ndarray) -> Dict:
+        """Минимальный контраст края (ECmin)"""
+        # Расчет градиентов
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        gradient = np.sqrt(sobelx**2 + sobely**2)
+        
+        # Находим минимальный значимый контраст
+        ec_min = np.percentile(gradient[gradient > 0], 10)
+        
+        # Нормализация
+        ec_min_norm = min(100, ec_min / 2.55)
+        
+        if ec_min_norm >= 15: grade = 4.0
+        elif ec_min_norm >= 10: grade = 3.0
+        elif ec_min_norm >= 7: grade = 2.0
+        elif ec_min_norm >= 5: grade = 1.0
+        else: grade = 0.0
+        
+        return {
+            'value': float(ec_min_norm),
+            'grade': grade,
+            'passed': grade >= 2.0,
+            'details': f"ECmin = {ec_min_norm:.1f}%"
+        }
+    
+    def _check_modulation(self, gray: np.ndarray) -> Dict:
+        """Модуляция (MOD)"""
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+        
+        dark_peak = np.argmax(hist[:128])
+        light_peak = np.argmax(hist[128:]) + 128
+        
+        sc = light_peak - dark_peak
+        
+        # Находим локальные минимумы и максимумы
+        local_mins = []
+        local_maxs = []
+        
+        for i in range(1, 255):
+            if hist[i] < hist[i-1] and hist[i] < hist[i+1]:
+                local_mins.append((i, hist[i]))
+            if hist[i] > hist[i-1] and hist[i] > hist[i+1]:
+                local_maxs.append((i, hist[i]))
+        
+        if not local_mins or not local_maxs:
+            return {'value': 0.0, 'grade': 0.0, 'passed': False, 'details': "No modulation"}
+        
+        # Модуляция = ECmin / SC
+        ec_min = min([m[0] for m in local_maxs]) - max([m[0] for m in local_mins])
+        modulation = ec_min / sc if sc > 0 else 0
+        
+        if modulation >= 0.70: grade = 4.0
+        elif modulation >= 0.60: grade = 3.0
+        elif modulation >= 0.50: grade = 2.0
+        elif modulation >= 0.40: grade = 1.0
+        else: grade = 0.0
+        
+        return {
+            'value': float(modulation),
+            'grade': grade,
+            'passed': grade >= 2.0,
+            'details': f"MOD = {modulation:.2f}"
+        }
+    
+    def _check_defects(self, gray: np.ndarray) -> Dict:
+        """Дефекты"""
+        # Бинаризация и анализ связных компонент
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # Инвертируем для анализа дефектов
+        binary_inv = cv2.bitwise_not(binary)
+        
+        # Находим контуры дефектов
+        contours, _ = cv2.findContours(binary_inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Суммарная площадь дефектов
+        defect_area = sum(cv2.contourArea(c) for c in contours)
+        total_area = gray.shape[0] * gray.shape[1]
+        defect_ratio = defect_area / total_area
+        
+        # Преобразуем в оценку
+        defect_percent = defect_ratio * 100
+        
+        if defect_percent <= 0.5: grade = 4.0
+        elif defect_percent <= 1.0: grade = 3.0
+        elif defect_percent <= 1.5: grade = 2.0
+        elif defect_percent <= 2.0: grade = 1.0
+        else: grade = 0.0
+        
+        return {
+            'value': float(defect_percent),
+            'grade': grade,
+            'passed': grade >= 2.0,
+            'details': f"Defects = {defect_percent:.2f}%"
+        }
+    
+    def _check_decodability(self, gray: np.ndarray) -> Dict:
+        """Декодируемость"""
+        # Проверка структуры сетки Data Matrix
+        height, width = gray.shape
+        
+        # Ожидаемая структура: чередующиеся модули
+        # Анализируем профили яркости
+        row_profile = np.mean(gray, axis=1)
+        col_profile = np.mean(gray, axis=0)
+        
+        # Проверка периодичности (должна быть четкая структура)
+        row_fft = np.abs(np.fft.fft(row_profile))
+        col_fft = np.abs(np.fft.fft(col_profile))
+        
+        # Находим доминирующие частоты
+        row_peaks = len(np.where(row_fft > np.mean(row_fft) * 2)[0])
+        col_peaks = len(np.where(col_fft > np.mean(col_fft) * 2)[0])
+        
+        # Хорошая декодируемость - четкие пики в спектре
+        decodability_score = min(row_peaks, col_peaks) / max(height, width) * 100
+        
+        if decodability_score >= 80: grade = 4.0
+        elif decodability_score >= 60: grade = 3.0
+        elif decodability_score >= 40: grade = 2.0
+        elif decodability_score >= 20: grade = 1.0
+        else: grade = 0.0
+        
+        return {
+            'value': float(decodability_score),
+            'grade': grade,
+            'passed': grade >= 2.0,
+            'details': f"Decodability = {decodability_score:.1f}%"
+        }
+    
+    def _grade_to_letter(self, grade: float) -> str:
+        """Преобразование числовой оценки в буквенную"""
+        for threshold, letter in sorted(self.GRADE_THRESHOLDS.items(), reverse=True):
+            if grade >= threshold:
+                return letter
+        return 'F'
