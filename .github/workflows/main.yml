@@ -42,6 +42,11 @@ jobs:
       run: |
         $ErrorActionPreference = "Stop"
         
+        # Создаем директорию assets если не существует
+        if (-not (Test-Path "assets")) {
+          New-Item -ItemType Directory -Force -Path "assets"
+        }
+        
         $iconArg = ""
         if (Test-Path "assets\icon.ico") {
           $iconArg = "--icon=assets\icon.ico"
@@ -54,9 +59,7 @@ jobs:
           --windowed `
           --onefile `
           $iconArg `
-          --add-data "src;src" `
           --add-data "scanner;scanner" `
-          --add-data "assets;assets" `
           --hidden-import=cv2 `
           --hidden-import=cv2.data `
           --hidden-import=PyQt6 `
@@ -68,6 +71,11 @@ jobs:
           --hidden-import=numpy `
           --hidden-import=PIL `
           --hidden-import=PIL.Image `
+          --hidden-import=scanner.camera_capture `
+          --hidden-import=scanner.quality_analyzer `
+          --hidden-import=scanner.datamatrix_decoder `
+          --hidden-import=utils.config `
+          --hidden-import=ui.main_window `
           --collect-all PyQt6 `
           --collect-all cv2 `
           --collect-all PIL `
