@@ -1,5 +1,6 @@
 @echo off
 REM Скрипт сборки Data Matrix Scanner для Windows (x64 и x86)
+REM Автоматически определяет разрядность системы и собирает соответствующую версию
 
 echo ========================================
 echo Data Matrix Scanner - Сборка для Windows

@@ -25,6 +25,7 @@ a = Analysis(
         'scanner.camera_capture',
         'scanner.quality_analyzer',
         'utils.config',
+        'importlib.util',
     ],
     hookspath=[],
     hooksconfig={},

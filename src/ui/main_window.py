@@ -29,9 +29,48 @@ except ImportError:
         from src.scanner.quality_analyzer import ConveyorAnalyzer, InspectionResult
         from src.utils.config import GOSTConfig, AppConfig
     except ImportError:
-        from camera_capture import CameraCapture, CameraConfig
-        from quality_analyzer import ConveyorAnalyzer, InspectionResult
-        from config import GOSTConfig, AppConfig
+        try:
+            from camera_capture import CameraCapture, CameraConfig
+            from quality_analyzer import ConveyorAnalyzer, InspectionResult
+            from config import GOSTConfig, AppConfig
+        except ImportError:
+            # Fallback for bundled app - dynamic loading
+            import sys
+            from pathlib import Path
+            import importlib.util
+            
+            # Try to load camera_capture
+            camera_path = Path(__file__).parent.parent / "scanner" / "camera_capture.py"
+            if camera_path.exists():
+                spec = importlib.util.spec_from_file_location("camera_capture", camera_path)
+                camera_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(camera_module)
+                CameraCapture = camera_module.CameraCapture
+                CameraConfig = camera_module.CameraConfig
+            else:
+                raise
+            
+            # Try to load quality_analyzer
+            analyzer_path = Path(__file__).parent.parent / "scanner" / "quality_analyzer.py"
+            if analyzer_path.exists():
+                spec = importlib.util.spec_from_file_location("quality_analyzer", analyzer_path)
+                analyzer_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(analyzer_module)
+                ConveyorAnalyzer = analyzer_module.ConveyorAnalyzer
+                InspectionResult = analyzer_module.InspectionResult
+            else:
+                raise
+                
+            # Try to load config
+            config_path = Path(__file__).parent.parent / "utils" / "config.py"
+            if config_path.exists():
+                spec = importlib.util.spec_from_file_location("config", config_path)
+                config_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(config_module)
+                GOSTConfig = config_module.GOSTConfig
+                AppConfig = config_module.AppConfig
+            else:
+                raise
 
 logger = logging.getLogger(__name__)
 

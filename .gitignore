@@ -1,28 +1,60 @@
-*.spec
+```
+# Build artifacts
+build/
+dist/
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+*.obj
+*.o
+*.out
+
+# Dependencies
+venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
 env/
-venv/
-.venv/
+.venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Logs
+*.log
+
+# Environment variables
 .env
 .env.local
 *.env.*
+
+# Editors/IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*.tmp
-*.log
+*~
 .DS_Store
 Thumbs.db
-dist/
-build/
-target/
-.coverage
+
+# Coverage reports
 coverage/
 htmlcov/
-.mypy_cache/
+.coverage
+*.cover
+
+# Testing
 .pytest_cache/
+.mypy_cache/
+.hypothesis/
+
+# OS generated
+.DS_Store
+ehthumbs.db
+Icon?
+Thumbs.db
+```
