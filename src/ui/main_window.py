@@ -681,7 +681,7 @@ class MainWindow(QMainWindow):
     def _log(self, message: str):
         """Добавление в лог"""
         timestamp = datetime.now().strftime('%H:%M:%S')
-        self.log_text.append(f"[{timestamp}] {message}")
+        self.log_text.appendPlainText(f"[{timestamp}] {message}")
         
     def closeEvent(self, event):
         """Обработка закрытия окна"""
