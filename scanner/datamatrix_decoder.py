@@ -201,7 +201,7 @@ class DataMatrixDecoder:
                     img,
                     timeout=self.timeout_ms,
                     max_count=1,
-                    shrink=1
+                    shrink=1  # Убираем shrink для маленьких регионов
                 )
                 
                 for item in decoded:
@@ -215,6 +215,27 @@ class DataMatrixDecoder:
                     return result
             except Exception:
                 continue
+        
+        # Если не удалось с shrink=1, пробуем без ограничений
+        try:
+            decoded = decode(
+                region,
+                timeout=self.timeout_ms * 2,  # Увеличиваем таймаут
+                max_count=1,
+                shrink=2  # Пробуем уменьшить изображение
+            )
+            
+            for item in decoded:
+                result = {
+                    'data': item.data.decode('utf-8'),
+                    'rect': (0, 0, region.shape[1], region.shape[0]),
+                    'confidence': getattr(item, 'quality', 0),
+                    'polygon': self._get_polygon(item),
+                    'timestamp': cv2.getTickCount()
+                }
+                return result
+        except Exception:
+            pass
         
         return None
     
