@@ -26,6 +26,8 @@ a = Analysis(
         'scanner.quality_analyzer',
         'utils.config',
         'importlib.util',
+        'scipy',
+        'scipy.ndimage',
     ],
     hookspath=[],
     hooksconfig={},

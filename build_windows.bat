@@ -10,6 +10,7 @@ REM Определение разрядности системы
 set "ARCH=x64"
 if "%PROCESSOR_ARCHITECTURE%"=="x86" set "ARCH=x86"
 if "%PROCESSOR_ARCHITEW6432%"=="AMD64" set "ARCH=x64"
+if "%PROCESSOR_ARCHITEW6432%"=="ARM64" set "ARCH=ARM64"
 
 echo [INFO] Обнаружена архитектура: %ARCH%
 echo.
@@ -42,6 +43,8 @@ pyi-makespec --onefile --windowed --name DataMatrixScanner ^
     --hidden-import=scanner.quality_analyzer ^
     --hidden-import=utils.config ^
     --hidden-import=importlib.util ^
+    --hidden-import=scipy ^
+    --hidden-import=scipy.ndimage ^
     src/main.py
 if errorlevel 1 (
     echo ОШИБКА: Не удалось создать spec-файл
