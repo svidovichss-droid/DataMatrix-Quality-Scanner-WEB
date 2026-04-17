@@ -9,7 +9,9 @@ import os
 import logging
 from pathlib import Path
 
-# Добавляем src в путь
+# Добавляем корень проекта и src в путь для правильного импорта модулей
+ROOT_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT_DIR))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from PyQt6.QtWidgets import QApplication
