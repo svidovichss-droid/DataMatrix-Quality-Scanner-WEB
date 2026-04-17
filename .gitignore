@@ -1,1 +1,19 @@
-Nothing should be ignored based on the provided file changes. The only modified file is 'scanner/datamatrix_decoder.py', which is a Python source file and should not be added to .gitignore.
+```
+# Compiled Python files
+*.pyc
+__pycache__/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# Environment files
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+```
