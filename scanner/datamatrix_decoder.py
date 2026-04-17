@@ -443,9 +443,9 @@ class DataMatrixDecoder:
             decoded_objects = pyzbar.decode(gray)
             
             for obj in decoded_objects:
-                # Фильтруем только DataMatrix (тип 'DATABAR' или проверяем по данным)
-                # pyzbar не имеет явного DATAMATRIX, но декодирует его автоматически
-                if obj.type == 'DATAMATRIX' or hasattr(obj, 'type'):
+                # pyzbar возвращает type='DATAMATRIX' для Data Matrix кодов
+                # Также проверяем на 'DATABAR' который может содержать DataMatrix
+                if obj.type in ['DATAMATRIX']:
                     # Получаем bounding box
                     points = obj.polygon
                     if points:
@@ -480,8 +480,8 @@ class DataMatrixDecoder:
                 decoded_objects = pyzbar.decode(img)
                 
                 for obj in decoded_objects:
-                    # Проверяем что это DataMatrix или другой 2D код
-                    if obj.data and obj.type in ['DATAMATRIX', 'QRCODE', 'SQCODE']:
+                    # Проверяем что это DataMatrix
+                    if obj.data and obj.type == 'DATAMATRIX':
                         points = obj.polygon
                         if points:
                             pts = np.array([(p.x, p.y) for p in points], dtype=np.int32)
@@ -521,8 +521,8 @@ class DataMatrixDecoder:
                 decoded_objects = pyzbar.decode(img)
                 
                 for obj in decoded_objects:
-                    # Проверяем что это DataMatrix или другой 2D код
-                    if obj.data and obj.type in ['DATAMATRIX', 'QRCODE', 'SQCODE']:
+                    # Проверяем что это DataMatrix
+                    if obj.data and obj.type == 'DATAMATRIX':
                         points = obj.polygon
                         if points:
                             pts = np.array([(p.x, p.y) for p in points], dtype=np.int32)
