@@ -21,6 +21,16 @@ except ImportError:
             raise ImportError("pylibdmtx not available")
         PYLIBDMTX_AVAILABLE = False
 
+# Импорт pyzbar как альтернативного декодера (поддерживает DataMatrix)
+try:
+    from pyzbar import pyzbar
+    from pyzbar.pyzbar import ZBarSymbol
+    PYZBAR_AVAILABLE = True
+except ImportError:
+    PYZBAR_AVAILABLE = False
+    pyzbar = None
+    ZBarSymbol = None
+
 
 class DataMatrixDecoder:
     """Декодер Data Matrix с поддержкой ECC 200
@@ -60,7 +70,17 @@ class DataMatrixDecoder:
             except Exception as e:
                 logger.warning(f"Ошибка поиска pylibdmtx: {e}")
         
-        # Попытка 2: Поиск через OpenCV WeChat QR detector
+        # Попытка 2: Поиск через pyzbar (альтернативный декодер)
+        if PYZBAR_AVAILABLE:
+            try:
+                results = self._detect_with_pyzbar(frame)
+                if results:
+                    logger.info(f"Поиск: найдено {len(results)} Data Matrix кодов (pyzbar)")
+                    return results
+            except Exception as e:
+                logger.warning(f"Ошибка поиска pyzbar: {e}")
+        
+        # Попытка 3: Поиск через OpenCV WeChat QR detector
         try:
             results = self._detect_with_opencv(frame)
             if results:
@@ -69,7 +89,7 @@ class DataMatrixDecoder:
         except Exception as e:
             logger.warning(f"Ошибка поиска OpenCV: {e}")
         
-        # Попытка 3: Поиск через контуры (для больших четких кодов)
+        # Попытка 4: Поиск через контуры (для больших четких кодов)
         try:
             results = self._detect_with_contours(frame)
             if results:
@@ -102,7 +122,17 @@ class DataMatrixDecoder:
             except Exception as e:
                 logger.warning(f"Ошибка сканирования pylibdmtx: {e}")
         
-        # Попытка 2: OpenCV
+        # Попытка 2: pyzbar (альтернативный декодер)
+        if PYZBAR_AVAILABLE:
+            try:
+                result = self._decode_region_with_pyzbar(region)
+                if result:
+                    logger.debug(f"Сканирование: успешно декодировано (pyzbar): {result['data']}")
+                    return result
+            except Exception as e:
+                logger.warning(f"Ошибка сканирования pyzbar: {e}")
+        
+        # Попытка 3: OpenCV
         try:
             result = self._decode_region_with_opencv(region)
             if result:
@@ -136,7 +166,17 @@ class DataMatrixDecoder:
             except Exception as e:
                 logger.warning(f"Ошибка pylibdmtx: {e}")
         
-        # Попытка 2: Используем OpenCV WeChat QR detector (поддерживает DataMatrix)
+        # Попытка 2: Используем pyzbar (альтернативный декодер)
+        if PYZBAR_AVAILABLE:
+            try:
+                results = self._decode_with_pyzbar(frame)
+                if results:
+                    logger.info(f"Найдено {len(results)} Data Matrix кодов (pyzbar)")
+                    return results
+            except Exception as e:
+                logger.warning(f"Ошибка pyzbar: {e}")
+        
+        # Попытка 3: Используем OpenCV WeChat QR detector (поддерживает DataMatrix)
         try:
             results = self._decode_with_opencv(frame)
             if results:
@@ -145,7 +185,7 @@ class DataMatrixDecoder:
         except Exception as e:
             logger.warning(f"Ошибка OpenCV декодера: {e}")
         
-        # Попытка 3: Простой детектор контуров для больших кодов
+        # Попытка 4: Простой детектор контуров для больших кодов
         try:
             results = self._decode_with_contours(frame)
             if results:
@@ -388,6 +428,125 @@ class DataMatrixDecoder:
             # Альтернативный метод с обычным QR детектором
             pass
             
+        return results
+    
+    def _detect_with_pyzbar(self, frame: np.ndarray) -> List[Dict]:
+        """Поиск DataMatrix с помощью pyzbar (только локализация)"""
+        results = []
+        
+        # Конвертируем в оттенки серого если нужно
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+        
+        try:
+            # Декодируем - pyzbar по умолчанию декодирует все типы включая DataMatrix
+            # Не указываем symbols чтобы декодировать все типы
+            decoded_objects = pyzbar.decode(gray)
+            
+            for obj in decoded_objects:
+                # Фильтруем только DataMatrix (тип 'DATABAR' или проверяем по данным)
+                # pyzbar не имеет явного DATAMATRIX, но декодирует его автоматически
+                if obj.type == 'DATAMATRIX' or hasattr(obj, 'type'):
+                    # Получаем bounding box
+                    points = obj.polygon
+                    if points:
+                        pts = np.array([(p.x, p.y) for p in points], dtype=np.int32)
+                        x, y, w, h = cv2.boundingRect(pts)
+                        
+                        result = {
+                            'rect': (x, y, w, h),
+                            'polygon': pts,
+                            'timestamp': cv2.getTickCount()
+                        }
+                        # Проверка на дубликаты по позиции
+                        if not any(r['rect'] == result['rect'] for r in results):
+                            results.append(result)
+        except Exception as e:
+            logger.warning(f"Ошибка pyzbar detect: {e}")
+            
+        return results
+    
+    def _decode_region_with_pyzbar(self, region: np.ndarray) -> Optional[Dict]:
+        """Декодирование захваченной области с помощью pyzbar"""
+        # Конвертируем в оттенки серого если нужно
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY) if len(region.shape) == 3 else region
+        
+        # Предобработка для улучшения декодирования
+        preprocessed = self._preprocess(region)
+        
+        # Пробуем разные варианты изображения
+        for img in [gray, preprocessed, cv2.bitwise_not(preprocessed)]:
+            try:
+                # Декодируем - pyzbar по умолчанию декодирует все типы включая DataMatrix
+                decoded_objects = pyzbar.decode(img)
+                
+                for obj in decoded_objects:
+                    # Проверяем что это DataMatrix или другой 2D код
+                    if obj.data and obj.type in ['DATAMATRIX', 'QRCODE', 'SQCODE']:
+                        points = obj.polygon
+                        if points:
+                            pts = np.array([(p.x, p.y) for p in points], dtype=np.int32)
+                        else:
+                            pts = np.array([[0, 0], [region.shape[1], 0], 
+                                           [region.shape[1], region.shape[0]], 
+                                           [0, region.shape[0]]], dtype=np.int32)
+                        
+                        result = {
+                            'data': obj.data.decode('utf-8'),
+                            'rect': (0, 0, region.shape[1], region.shape[0]),
+                            'confidence': getattr(obj, 'quality', 1.0),
+                            'polygon': pts,
+                            'timestamp': cv2.getTickCount()
+                        }
+                        return result
+            except Exception as e:
+                logger.debug(f"Ошибка pyzbar decode_region: {e}")
+                continue
+        
+        return None
+    
+    def _decode_with_pyzbar(self, frame: np.ndarray) -> List[Dict]:
+        """Декодирование с помощью pyzbar (полная операция)"""
+        results = []
+        
+        # Конвертируем в оттенки серого если нужно
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+        
+        # Предобработка для улучшения декодирования
+        preprocessed = self._preprocess(frame)
+        
+        # Пробуем разные варианты изображения
+        for img in [gray, preprocessed, cv2.bitwise_not(preprocessed)]:
+            try:
+                # Декодируем - pyzbar по умолчанию декодирует все типы включая DataMatrix
+                decoded_objects = pyzbar.decode(img)
+                
+                for obj in decoded_objects:
+                    # Проверяем что это DataMatrix или другой 2D код
+                    if obj.data and obj.type in ['DATAMATRIX', 'QRCODE', 'SQCODE']:
+                        points = obj.polygon
+                        if points:
+                            pts = np.array([(p.x, p.y) for p in points], dtype=np.int32)
+                            x, y, w, h = cv2.boundingRect(pts)
+                        else:
+                            pts = np.array([[0, 0], [frame.shape[1], 0], 
+                                           [frame.shape[1], frame.shape[0]], 
+                                           [0, frame.shape[0]]], dtype=np.int32)
+                            x, y, w, h = 0, 0, frame.shape[1], frame.shape[0]
+                        
+                        result = {
+                            'data': obj.data.decode('utf-8'),
+                            'rect': (x, y, w, h),
+                            'confidence': getattr(obj, 'quality', 1.0),
+                            'polygon': pts,
+                            'timestamp': cv2.getTickCount()
+                        }
+                        # Проверка на дубликаты по данным
+                        if not any(r.get('data') == result['data'] for r in results):
+                            results.append(result)
+            except Exception as e:
+                logger.warning(f"Ошибка pyzbar decode: {e}")
+                continue
+        
         return results
     
     def _decode_with_contours(self, frame: np.ndarray) -> List[Dict]:
