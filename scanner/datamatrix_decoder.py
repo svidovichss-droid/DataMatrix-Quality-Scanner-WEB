@@ -23,18 +23,106 @@ except ImportError:
 
 
 class DataMatrixDecoder:
-    """Декодер Data Matrix с поддержкой ECC 200"""
+    """Декодер Data Matrix с поддержкой ECC 200
+    
+    Поддерживает раздельные операции:
+    1. detect_codes() - поиск и локализация кодов (без декодирования)
+    2. decode_region() - декодирование захваченной области
+    3. decode_frame() - полная операция (поиск + декодирование) для обратной совместимости
+    """
     
     def __init__(self, timeout_ms: int = 500):
         self.timeout_ms = timeout_ms
         self.decoded_history: List[Dict] = []
         
+    def detect_codes(self, frame: np.ndarray) -> List[Dict]:
+        """
+        Шаг 1: ПОИСК DataMatrix - детектирование и локализация кодов в кадре
+        
+        Эта метода только находит коды и возвращает их местоположение,
+        без попытки декодирования данных.
+        
+        Args:
+            frame: Кадр изображения
+            
+        Returns:
+            Список найденных кодов с информацией о позиции (rect)
+        """
+        results = []
+        
+        # Попытка 1: Поиск через pylibdmtx (если доступен, сразу дает и позицию)
+        if PYLIBDMTX_AVAILABLE:
+            try:
+                results = self._detect_with_pylibdmtx(frame)
+                if results:
+                    logger.info(f"Поиск: найдено {len(results)} Data Matrix кодов (pylibdmtx)")
+                    return results
+            except Exception as e:
+                logger.warning(f"Ошибка поиска pylibdmtx: {e}")
+        
+        # Попытка 2: Поиск через OpenCV WeChat QR detector
+        try:
+            results = self._detect_with_opencv(frame)
+            if results:
+                logger.info(f"Поиск: найдено {len(results)} Data Matrix кодов (OpenCV)")
+                return results
+        except Exception as e:
+            logger.warning(f"Ошибка поиска OpenCV: {e}")
+        
+        # Попытка 3: Поиск через контуры (для больших четких кодов)
+        try:
+            results = self._detect_with_contours(frame)
+            if results:
+                logger.info(f"Поиск: найдено {len(results)} Data Matrix кодов (contours)")
+                return results
+        except Exception as e:
+            logger.warning(f"Ошибка поиска contours: {e}")
+        
+        return results
+    
+    def decode_region(self, region: np.ndarray) -> Optional[Dict]:
+        """
+        Шаг 3: СКАНИРОВАНИЕ - декодирование захваченной области
+        
+        Эта метода пытается декодировать данные из уже вырезанной области.
+        
+        Args:
+            region: Вырезанная область изображения с кодом
+            
+        Returns:
+            Dict с данными ('data') или None если декодирование не удалось
+        """
+        # Попытка 1: pylibdmtx
+        if PYLIBDMTX_AVAILABLE:
+            try:
+                result = self._decode_region_with_pylibdmtx(region)
+                if result:
+                    logger.debug(f"Сканирование: успешно декодировано (pylibdmtx): {result['data']}")
+                    return result
+            except Exception as e:
+                logger.warning(f"Ошибка сканирования pylibdmtx: {e}")
+        
+        # Попытка 2: OpenCV
+        try:
+            result = self._decode_region_with_opencv(region)
+            if result:
+                logger.debug(f"Сканирование: успешно декодировано (OpenCV): {result['data']}")
+                return result
+        except Exception as e:
+            logger.warning(f"Ошибка сканирования OpenCV: {e}")
+        
+        logger.debug("Сканирование: не удалось декодировать код")
+        return None
+    
     def decode_frame(self, frame: np.ndarray) -> List[Dict]:
         """
-        Декодирование Data Matrix из кадра
+        Полная операция: поиск + декодирование (для обратной совместимости)
         
+        Args:
+            frame: Кадр изображения
+            
         Returns:
-            Список найденных кодов с метаданными
+            Список найденных и декодированных кодов
         """
         results = []
         
@@ -68,8 +156,70 @@ class DataMatrixDecoder:
         
         return results
     
+    def _detect_with_pylibdmtx(self, frame: np.ndarray) -> List[Dict]:
+        """Поиск DataMatrix с помощью pylibdmtx (только локализация)"""
+        results = []
+        
+        # Предобработка для улучшения детектирования
+        preprocessed = self._preprocess(frame)
+        
+        # Попытка детектирования с разными препроцессорами
+        for img in [frame, preprocessed, cv2.bitwise_not(preprocessed)]:
+            try:
+                decoded = decode(
+                    img,
+                    timeout=min(self.timeout_ms, 200),  # Для поиска используем короткий таймаут
+                    max_count=20,
+                    shrink=1
+                )
+                
+                for item in decoded:
+                    result = {
+                        'rect': (item.rect.left, item.rect.top, 
+                                item.rect.width, item.rect.height),
+                        'polygon': self._get_polygon(item),
+                        'timestamp': cv2.getTickCount()
+                    }
+                    # Проверка на дубликаты по позиции
+                    if not any(r['rect'] == result['rect'] for r in results):
+                        results.append(result)
+            except Exception:
+                continue
+        
+        # Удаляем дубликаты (перекрывающиеся области)
+        return self._non_max_suppression(results)
+    
+    def _decode_region_with_pylibdmtx(self, region: np.ndarray) -> Optional[Dict]:
+        """Декодирование захваченной области с помощью pylibdmtx"""
+        # Предобработка для улучшения декодирования
+        preprocessed = self._preprocess(region)
+        
+        # Попытка декодирования с разными препроцессорами
+        for img in [region, preprocessed, cv2.bitwise_not(preprocessed)]:
+            try:
+                decoded = decode(
+                    img,
+                    timeout=self.timeout_ms,
+                    max_count=1,
+                    shrink=1
+                )
+                
+                for item in decoded:
+                    result = {
+                        'data': item.data.decode('utf-8'),
+                        'rect': (0, 0, region.shape[1], region.shape[0]),  # Относительно региона
+                        'confidence': getattr(item, 'quality', 0),
+                        'polygon': self._get_polygon(item),
+                        'timestamp': cv2.getTickCount()
+                    }
+                    return result
+            except Exception:
+                continue
+        
+        return None
+    
     def _decode_with_pylibdmtx(self, frame: np.ndarray) -> List[Dict]:
-        """Декодирование с помощью pylibdmtx"""
+        """Декодирование с помощью pylibdmtx (полная операция)"""
         results = []
         
         # Предобработка для улучшения декодирования
@@ -101,6 +251,101 @@ class DataMatrixDecoder:
                 continue
                 
         return results
+    
+    def _detect_with_opencv(self, frame: np.ndarray) -> List[Dict]:
+        """Поиск DataMatrix с помощью OpenCV WeChat QR detector (только локализация)"""
+        results = []
+        
+        try:
+            detector = cv2.wechat_qrcode_WeChatQRCode()
+            
+            # Конвертируем в оттенки серого
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+            
+            # Детектируем и декодируем
+            res, points = detector.detectAndDecode(gray)
+            
+            for i, code_data in enumerate(res):
+                # Для поиска возвращаем даже без данных - главное позиция
+                pts = points[i].astype(int)
+                x, y, w, h = cv2.boundingRect(pts)
+                
+                result = {
+                    'rect': (x, y, w, h),
+                    'polygon': pts,
+                    'timestamp': cv2.getTickCount()
+                }
+                # Проверка на дубликаты по позиции
+                if not any(r['rect'] == result['rect'] for r in results):
+                    results.append(result)
+        except Exception:
+            pass
+            
+        return results
+    
+    def _decode_region_with_opencv(self, region: np.ndarray) -> Optional[Dict]:
+        """Декодирование захваченной области с помощью OpenCV"""
+        try:
+            detector = cv2.wechat_qrcode_WeChatQRCode()
+            
+            # Конвертируем в оттенки серого
+            gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY) if len(region.shape) == 3 else region
+            
+            # Детектируем и декодируем
+            res, points = detector.detectAndDecode(gray)
+            
+            for i, code_data in enumerate(res):
+                if code_data:  # Если данные успешно декодированы
+                    pts = points[i].astype(int)
+                    x, y, w, h = cv2.boundingRect(pts)
+                    
+                    result = {
+                        'data': code_data,
+                        'rect': (0, 0, region.shape[1], region.shape[0]),
+                        'confidence': 1.0,
+                        'polygon': pts,
+                        'timestamp': cv2.getTickCount()
+                    }
+                    return result
+        except Exception:
+            pass
+            
+        return None
+    
+    def _detect_with_contours(self, frame: np.ndarray) -> List[Dict]:
+        """Поиск DataMatrix через поиск контуров (только локализация)"""
+        results = []
+        
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+        
+        # Бинаризация
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        
+        # Поиск контуров
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for contour in contours:
+            # Аппроксимация полигона
+            epsilon = 0.02 * cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+            
+            # Ищем четырехугольники (потенциальные Data Matrix)
+            if len(approx) == 4:
+                area = cv2.contourArea(contour)
+                # Фильтруем по размеру (слишком маленькие игнорируем)
+                if 1000 < area < 100000:
+                    x, y, w, h = cv2.boundingRect(approx)
+                    
+                    result = {
+                        'rect': (x, y, w, h),
+                        'confidence': 0.5,
+                        'polygon': approx.reshape(-1, 2),
+                        'timestamp': cv2.getTickCount()
+                    }
+                    results.append(result)
+        
+        # Удаляем дубликаты (перекрывающиеся области)
+        return self._non_max_suppression(results)
     
     def _decode_with_opencv(self, frame: np.ndarray) -> List[Dict]:
         """Декодирование с помощью OpenCV WeChat QR detector"""
@@ -188,6 +433,60 @@ class DataMatrixDecoder:
         )
         
         return binary
+    
+    def _non_max_suppression(self, detections: List[Dict], iou_threshold: float = 0.5) -> List[Dict]:
+        """
+        Подавление немаксимумов для удаления перекрывающихся детекций
+        
+        Args:
+            detections: Список детекций с 'rect'
+            iou_threshold: Порог IoU для объединения
+            
+        Returns:
+            Отфильтрованный список детекций
+        """
+        if not detections:
+            return []
+        
+        # Сортируем по уверенности (если есть) или по площади
+        def get_score(det):
+            return det.get('confidence', 0) or (det['rect'][2] * det['rect'][3])
+        
+        sorted_detections = sorted(detections, key=get_score, reverse=True)
+        
+        selected = []
+        for current in sorted_detections:
+            x1, y1, w, h = current['rect']
+            x2, y2 = x1 + w, y1 + h
+            current_area = w * h
+            
+            should_select = True
+            for selected_det in selected:
+                sx1, sy1, sw, sh = selected_det['rect']
+                sx2, sy2 = sx1 + sw, sy1 + sh
+                
+                # Вычисляем пересечение
+                ix1 = max(x1, sx1)
+                iy1 = max(y1, sy1)
+                ix2 = min(x2, sx2)
+                iy2 = min(y2, sy2)
+                
+                inter_w = max(0, ix2 - ix1)
+                inter_h = max(0, iy2 - iy1)
+                inter_area = inter_w * inter_h
+                
+                # Вычисляем IoU
+                union_area = current_area + (sw * sh) - inter_area
+                iou = inter_area / union_area if union_area > 0 else 0
+                
+                if iou > iou_threshold:
+                    should_select = False
+                    break
+            
+            if should_select:
+                selected.append(current)
+        
+        return selected
     
     def _get_polygon(self, decoded_item) -> np.ndarray:
         """Получение полигона из decoded item"""
