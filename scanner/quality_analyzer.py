@@ -110,6 +110,11 @@ class ConveyorAnalyzer:
         """
         Обработка кадра с конвейера
         
+        Последовательность операций:
+        1. Поиск DataMatrix (детектирование/локализация)
+        2. Захват (выделение области интереса)
+        3. Сканирование (декодирование и верификация)
+        
         Args:
             frame: Кадр с камеры
             conveyor_speed: Скорость конвейера в м/мин
@@ -119,35 +124,73 @@ class ConveyorAnalyzer:
         """
         results = []
         
-        # Декодирование всех кодов в кадре
-        decoded_barcodes = self.decoder.decode_frame(frame)
+        # Шаг 1: ПОИСК DataMatrix - детектирование и локализация кодов в кадре
+        logger.info("Шаг 1: Поиск DataMatrix - детектирование кодов")
+        detected_codes = self.decoder.detect_codes(frame)
         
-        for barcode in decoded_barcodes:
-            # Вырезаем регион штрих-кода
-            x, y, w, h = barcode['rect']
-            # Добавляем отступ
+        if not detected_codes:
+            logger.debug("DataMatrix коды не обнаружены")
+            return results
+        
+        logger.info(f"Обнаружено {len(detected_codes)} DataMatrix кодов")
+        
+        for code_location in detected_codes:
+            # Шаг 2: ЗАХВАТ - выделение области интереса (ROI)
+            logger.debug("Шаг 2: Захват - выделение области интереса")
+            x, y, w, h = code_location['rect']
+            
+            # Добавляем отступ для захвата контекста
             padding = 20
             x1 = max(0, x - padding)
             y1 = max(0, y - padding)
             x2 = min(frame.shape[1], x + w + padding)
             y2 = min(frame.shape[0], y + h + padding)
             
-            barcode_region = frame[y1:y2, x1:x2]
+            # Захватываем область с кодом
+            barcode_region = frame[y1:y2, x1:x2].copy()
+            code_position = (x + w//2, y + h//2)
             
-            # Верификация качества
+            logger.debug(f"Захвачена область: x={x1}, y={y1}, w={x2-x1}, h={y2-y1}")
+            
+            # Шаг 3: СКАНИРОВАНИЕ - декодирование и верификация
+            logger.debug("Шаг 3: Сканирование - декодирование и верификация")
+            
+            # 3a. Декодирование захваченной области
+            decoded_data = self.decoder.decode_region(barcode_region)
+            
+            if not decoded_data:
+                logger.warning(f"Не удалось декодировать код в позиции {code_position}")
+                # Создаем результат с_failed статусом
+                inspection = InspectionResult(
+                    timestamp=datetime.now(),
+                    barcode_data="",
+                    position=code_position,
+                    quality_grades=self._create_failed_quality_result(),
+                    image_path=None,
+                    passed=False,
+                    conveyor_speed=conveyor_speed
+                )
+                results.append(inspection)
+                continue
+            
+            barcode_data = decoded_data['data']
+            logger.info(f"Декодировано: {barcode_data}")
+            
+            # 3b. Верификация качества захваченной области
             quality_result = self.verifier.verify(frame, barcode_region)
+            logger.info(f"Оценка качества: {quality_result['overall']['grade_letter']}")
             
             # Сохранение изображения если требуется
             image_path = None
             if self.save_images:
-                image_path = self._save_image(barcode_region, barcode['data'], 
+                image_path = self._save_image(barcode_region, barcode_data, 
                                              quality_result['overall']['grade_letter'])
             
-            # Создание результата
+            # Создание результата инспекции
             inspection = InspectionResult(
                 timestamp=datetime.now(),
-                barcode_data=barcode['data'],
-                position=(x + w//2, y + h//2),
+                barcode_data=barcode_data,
+                position=code_position,
                 quality_grades=quality_result,
                 image_path=image_path,
                 passed=quality_result['overall']['passed'],
@@ -163,6 +206,19 @@ class ConveyorAnalyzer:
                 callback(inspection)
                 
         return results
+    
+    def _create_failed_quality_result(self) -> Dict:
+        """Создает результат верификации с провальными оценками"""
+        return {
+            'decode': {'value': 0.0, 'grade': 0.0, 'passed': False, 'details': 'Decode failed'},
+            'symbol_contrast': {'value': 0.0, 'grade': 0.0, 'passed': False, 'details': 'N/A'},
+            'min_reflectance': {'value': 0.0, 'grade': 0.0, 'passed': False, 'details': 'N/A'},
+            'min_edge_contrast': {'value': 0.0, 'grade': 0.0, 'passed': False, 'details': 'N/A'},
+            'modulation': {'value': 0.0, 'grade': 0.0, 'passed': False, 'details': 'N/A'},
+            'defects': {'value': 0.0, 'grade': 0.0, 'passed': False, 'details': 'N/A'},
+            'decodability': {'value': 0.0, 'grade': 0.0, 'passed': False, 'details': 'N/A'},
+            'overall': {'grade': 0.0, 'grade_letter': 'F', 'passed': False}
+        }
     
     def _save_image(self, image: np.ndarray, barcode_data: str, 
                    grade: str) -> str:
