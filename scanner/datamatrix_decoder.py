@@ -165,13 +165,15 @@ class DataMatrixDecoder:
         
         # Попытка детектирования с разными препроцессорами и параметрами shrink
         for img in [frame, preprocessed, cv2.bitwise_not(preprocessed)]:
-            for shrink in [1, 2, 3]:  # Пробуем разные уровни shrink
+            # Пробуем разные уровни shrink - от 1 до 5 для лучшего захвата
+            for shrink in [1, 2, 3, 4, 5]:
                 try:
                     decoded = decode(
                         img,
-                        timeout=min(self.timeout_ms, 300),  # Увеличенный таймаут для поиска
+                        timeout=min(self.timeout_ms, 500),  # Увеличенный таймаут для поиска
                         max_count=20,
-                        shrink=shrink
+                        shrink=shrink,
+                        improvements=True  # Включаем улучшения обработки
                     )
                     
                     for item in decoded:
@@ -197,13 +199,15 @@ class DataMatrixDecoder:
         
         # Попытка декодирования с разными препроцессорами и параметрами shrink
         for img in [region, preprocessed, cv2.bitwise_not(preprocessed)]:
-            for shrink in [1, 2, 3]:  # Пробуем разные уровни shrink
+            # Пробуем разные уровни shrink - от 1 до 5 для лучшего захвата
+            for shrink in [1, 2, 3, 4, 5]:
                 try:
                     decoded = decode(
                         img,
-                        timeout=self.timeout_ms * 2,  # Увеличенный таймаут для декодирования
+                        timeout=self.timeout_ms * 3,  # Увеличенный таймаут для декодирования
                         max_count=1,
-                        shrink=shrink
+                        shrink=shrink,
+                        improvements=True  # Включаем улучшения обработки
                     )
                     
                     for item in decoded:
@@ -229,13 +233,15 @@ class DataMatrixDecoder:
         
         # Попытка декодирования с разными препроцессорами и параметрами shrink
         for img in [frame, preprocessed, cv2.bitwise_not(preprocessed)]:
-            for shrink in [1, 2, 3]:  # Пробуем разные уровни shrink
+            # Пробуем разные уровни shrink - от 1 до 5 для лучшего захвата
+            for shrink in [1, 2, 3, 4, 5]:
                 try:
                     decoded = decode(
                         img,
-                        timeout=self.timeout_ms * 2,  # Увеличенный таймаут
+                        timeout=self.timeout_ms * 3,  # Увеличенный таймаут
                         max_count=10,
-                        shrink=shrink
+                        shrink=shrink,
+                        improvements=True  # Включаем улучшения обработки
                     )
                     
                     for item in decoded:
@@ -252,7 +258,7 @@ class DataMatrixDecoder:
                             results.append(result)
                 except Exception:
                     continue
-                
+        
         return results
     
     def _detect_with_opencv(self, frame: np.ndarray) -> List[Dict]:
@@ -425,14 +431,23 @@ class DataMatrixDecoder:
         return results
     
     def _preprocess(self, frame: np.ndarray) -> np.ndarray:
-        """Предобработка изображения"""
+        """Предобработка изображения для улучшения декодирования DataMatrix"""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
         
-        # Адаптивная бинаризация
+        # Применяем размытие Гаусса для уменьшения шума
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        
+        # Увеличение резкости для улучшения контраста границ
+        kernel = np.array([[-1, -1, -1],
+                          [-1,  8, -1],
+                          [-1, -1, -1]])
+        sharpened = cv2.filter2D(blurred, -1, kernel)
+        
+        # Адаптивная бинаризация с разными параметрами
         binary = cv2.adaptiveThreshold(
-            gray, 255, 
+            sharpened, 255, 
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY, 11, 2
+            cv2.THRESH_BINARY, 15, 5
         )
         
         return binary
