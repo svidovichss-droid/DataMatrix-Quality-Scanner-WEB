@@ -18,7 +18,22 @@ except ImportError:
     try:
         from scanner.datamatrix_decoder import DataMatrixDecoder, DataMatrixVerifier
     except ImportError:
-        from src.scanner.datamatrix_decoder import DataMatrixDecoder, DataMatrixVerifier
+        try:
+            from src.scanner.datamatrix_decoder import DataMatrixDecoder, DataMatrixVerifier
+        except ImportError:
+            # Fallback for bundled app
+            import sys
+            from pathlib import Path
+            scanner_path = Path(__file__).parent / "datamatrix_decoder.py"
+            if scanner_path.exists():
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("datamatrix_decoder", scanner_path)
+                datamatrix_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(datamatrix_module)
+                DataMatrixDecoder = datamatrix_module.DataMatrixDecoder
+                DataMatrixVerifier = datamatrix_module.DataMatrixVerifier
+            else:
+                raise
 
 logger = logging.getLogger(__name__)
 
