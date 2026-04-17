@@ -163,28 +163,29 @@ class DataMatrixDecoder:
         # Предобработка для улучшения детектирования
         preprocessed = self._preprocess(frame)
         
-        # Попытка детектирования с разными препроцессорами
+        # Попытка детектирования с разными препроцессорами и параметрами shrink
         for img in [frame, preprocessed, cv2.bitwise_not(preprocessed)]:
-            try:
-                decoded = decode(
-                    img,
-                    timeout=min(self.timeout_ms, 200),  # Для поиска используем короткий таймаут
-                    max_count=20,
-                    shrink=1
-                )
-                
-                for item in decoded:
-                    result = {
-                        'rect': (item.rect.left, item.rect.top, 
-                                item.rect.width, item.rect.height),
-                        'polygon': self._get_polygon(item),
-                        'timestamp': cv2.getTickCount()
-                    }
-                    # Проверка на дубликаты по позиции
-                    if not any(r['rect'] == result['rect'] for r in results):
-                        results.append(result)
-            except Exception:
-                continue
+            for shrink in [1, 2, 3]:  # Пробуем разные уровни shrink
+                try:
+                    decoded = decode(
+                        img,
+                        timeout=min(self.timeout_ms, 300),  # Увеличенный таймаут для поиска
+                        max_count=20,
+                        shrink=shrink
+                    )
+                    
+                    for item in decoded:
+                        result = {
+                            'rect': (item.rect.left, item.rect.top, 
+                                    item.rect.width, item.rect.height),
+                            'polygon': self._get_polygon(item),
+                            'timestamp': cv2.getTickCount()
+                        }
+                        # Проверка на дубликаты по позиции
+                        if not any(r['rect'] == result['rect'] for r in results):
+                            results.append(result)
+                except Exception:
+                    continue
         
         # Удаляем дубликаты (перекрывающиеся области)
         return self._non_max_suppression(results)
@@ -194,48 +195,28 @@ class DataMatrixDecoder:
         # Предобработка для улучшения декодирования
         preprocessed = self._preprocess(region)
         
-        # Попытка декодирования с разными препроцессорами
+        # Попытка декодирования с разными препроцессорами и параметрами shrink
         for img in [region, preprocessed, cv2.bitwise_not(preprocessed)]:
-            try:
-                decoded = decode(
-                    img,
-                    timeout=self.timeout_ms,
-                    max_count=1,
-                    shrink=1  # Убираем shrink для маленьких регионов
-                )
-                
-                for item in decoded:
-                    result = {
-                        'data': item.data.decode('utf-8'),
-                        'rect': (0, 0, region.shape[1], region.shape[0]),  # Относительно региона
-                        'confidence': getattr(item, 'quality', 0),
-                        'polygon': self._get_polygon(item),
-                        'timestamp': cv2.getTickCount()
-                    }
-                    return result
-            except Exception:
-                continue
-        
-        # Если не удалось с shrink=1, пробуем без ограничений
-        try:
-            decoded = decode(
-                region,
-                timeout=self.timeout_ms * 2,  # Увеличиваем таймаут
-                max_count=1,
-                shrink=2  # Пробуем уменьшить изображение
-            )
-            
-            for item in decoded:
-                result = {
-                    'data': item.data.decode('utf-8'),
-                    'rect': (0, 0, region.shape[1], region.shape[0]),
-                    'confidence': getattr(item, 'quality', 0),
-                    'polygon': self._get_polygon(item),
-                    'timestamp': cv2.getTickCount()
-                }
-                return result
-        except Exception:
-            pass
+            for shrink in [1, 2, 3]:  # Пробуем разные уровни shrink
+                try:
+                    decoded = decode(
+                        img,
+                        timeout=self.timeout_ms * 2,  # Увеличенный таймаут для декодирования
+                        max_count=1,
+                        shrink=shrink
+                    )
+                    
+                    for item in decoded:
+                        result = {
+                            'data': item.data.decode('utf-8'),
+                            'rect': (0, 0, region.shape[1], region.shape[0]),  # Относительно региона
+                            'confidence': getattr(item, 'quality', 0),
+                            'polygon': self._get_polygon(item),
+                            'timestamp': cv2.getTickCount()
+                        }
+                        return result
+                except Exception:
+                    continue
         
         return None
     
@@ -246,30 +227,31 @@ class DataMatrixDecoder:
         # Предобработка для улучшения декодирования
         preprocessed = self._preprocess(frame)
         
-        # Попытка декодирования с разными препроцессорами
+        # Попытка декодирования с разными препроцессорами и параметрами shrink
         for img in [frame, preprocessed, cv2.bitwise_not(preprocessed)]:
-            try:
-                decoded = decode(
-                    img,
-                    timeout=self.timeout_ms,
-                    max_count=10,
-                    shrink=1
-                )
-                
-                for item in decoded:
-                    result = {
-                        'data': item.data.decode('utf-8'),
-                        'rect': (item.rect.left, item.rect.top, 
-                                item.rect.width, item.rect.height),
-                        'confidence': getattr(item, 'quality', 0),
-                        'polygon': self._get_polygon(item),
-                        'timestamp': cv2.getTickCount()
-                    }
-                    # Проверка на дубликаты
-                    if not any(r['data'] == result['data'] for r in results):
-                        results.append(result)
-            except Exception:
-                continue
+            for shrink in [1, 2, 3]:  # Пробуем разные уровни shrink
+                try:
+                    decoded = decode(
+                        img,
+                        timeout=self.timeout_ms * 2,  # Увеличенный таймаут
+                        max_count=10,
+                        shrink=shrink
+                    )
+                    
+                    for item in decoded:
+                        result = {
+                            'data': item.data.decode('utf-8'),
+                            'rect': (item.rect.left, item.rect.top, 
+                                    item.rect.width, item.rect.height),
+                            'confidence': getattr(item, 'quality', 0),
+                            'polygon': self._get_polygon(item),
+                            'timestamp': cv2.getTickCount()
+                        }
+                        # Проверка на дубликаты
+                        if not any(r['data'] == result['data'] for r in results):
+                            results.append(result)
+                except Exception:
+                    continue
                 
         return results
     
