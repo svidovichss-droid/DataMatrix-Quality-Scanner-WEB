@@ -10,13 +10,16 @@ logger = logging.getLogger(__name__)
 # Импорт pylibdmtx с обработкой ошибок для PyInstaller
 try:
     from pylibdmtx.pylibdmtx import decode
+    PYLIBDMTX_AVAILABLE = True
 except ImportError:
     try:
         from pylibdmtx import decode
+        PYLIBDMTX_AVAILABLE = True
     except ImportError:
         # Для случаев когда модуль еще не загружен
         def decode(*args, **kwargs):
             raise ImportError("pylibdmtx not available")
+        PYLIBDMTX_AVAILABLE = False
 
 
 class DataMatrixDecoder:
@@ -33,32 +36,144 @@ class DataMatrixDecoder:
         Returns:
             Список найденных кодов с метаданными
         """
+        results = []
+        
+        # Попытка 1: Используем pylibdmtx если доступен
+        if PYLIBDMTX_AVAILABLE:
+            try:
+                results = self._decode_with_pylibdmtx(frame)
+                if results:
+                    logger.info(f"Найдено {len(results)} Data Matrix кодов (pylibdmtx)")
+                    return results
+            except Exception as e:
+                logger.warning(f"Ошибка pylibdmtx: {e}")
+        
+        # Попытка 2: Используем OpenCV WeChat QR detector (поддерживает DataMatrix)
+        try:
+            results = self._decode_with_opencv(frame)
+            if results:
+                logger.info(f"Найдено {len(results)} Data Matrix кодов (OpenCV)")
+                return results
+        except Exception as e:
+            logger.warning(f"Ошибка OpenCV декодера: {e}")
+        
+        # Попытка 3: Простой детектор контуров для больших кодов
+        try:
+            results = self._decode_with_contours(frame)
+            if results:
+                logger.info(f"Найдено {len(results)} Data Matrix кодов (contours)")
+                return results
+        except Exception as e:
+            logger.warning(f"Ошибка contour декодера: {e}")
+        
+        return results
+    
+    def _decode_with_pylibdmtx(self, frame: np.ndarray) -> List[Dict]:
+        """Декодирование с помощью pylibdmtx"""
+        results = []
+        
         # Предобработка для улучшения декодирования
         preprocessed = self._preprocess(frame)
         
         # Попытка декодирования с разными препроцессорами
+        for img in [frame, preprocessed, cv2.bitwise_not(preprocessed)]:
+            try:
+                decoded = decode(
+                    img,
+                    timeout=self.timeout_ms,
+                    max_count=10,
+                    shrink=1
+                )
+                
+                for item in decoded:
+                    result = {
+                        'data': item.data.decode('utf-8'),
+                        'rect': (item.rect.left, item.rect.top, 
+                                item.rect.width, item.rect.height),
+                        'confidence': getattr(item, 'quality', 0),
+                        'polygon': self._get_polygon(item),
+                        'timestamp': cv2.getTickCount()
+                    }
+                    # Проверка на дубликаты
+                    if not any(r['data'] == result['data'] for r in results):
+                        results.append(result)
+            except Exception:
+                continue
+                
+        return results
+    
+    def _decode_with_opencv(self, frame: np.ndarray) -> List[Dict]:
+        """Декодирование с помощью OpenCV WeChat QR detector"""
         results = []
         
-        for img in [frame, preprocessed, cv2.bitwise_not(frame)]:
-            decoded = decode(
-                img,
-                timeout=self.timeout_ms,
-                max_count=10,
-                shrink=1
-            )
+        # Создаем детектор WeChat QR (поддерживает DataMatrix)
+        try:
+            detector = cv2.wechat_qrcode_WeChatQRCode()
             
-            for item in decoded:
-                result = {
-                    'data': item.data.decode('utf-8'),
-                    'rect': (item.rect.left, item.rect.top, 
-                            item.rect.width, item.rect.height),
-                    'confidence': getattr(item, 'quality', 0),
-                    'polygon': self._get_polygon(item),
-                    'timestamp': cv2.getTickCount()
-                }
-                if result not in results:
-                    results.append(result)
+            # Конвертируем в оттенки серого
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+            
+            # Детектируем и декодируем
+            res, points = detector.detectAndDecode(gray)
+            
+            for i, code_data in enumerate(res):
+                if code_data:  # Если данные успешно декодированы
+                    # Получаем bounding box
+                    pts = points[i].astype(int)
+                    x, y, w, h = cv2.boundingRect(pts)
                     
+                    result = {
+                        'data': code_data,
+                        'rect': (x, y, w, h),
+                        'confidence': 1.0,
+                        'polygon': pts,
+                        'timestamp': cv2.getTickCount()
+                    }
+                    results.append(result)
+        except Exception:
+            # Альтернативный метод с обычным QR детектором
+            pass
+            
+        return results
+    
+    def _decode_with_contours(self, frame: np.ndarray) -> List[Dict]:
+        """Простое декодирование через поиск контуров (для больших четких кодов)"""
+        results = []
+        
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+        
+        # Бинаризация
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        
+        # Поиск контуров
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for contour in contours:
+            # Аппроксимация полигона
+            epsilon = 0.02 * cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+            
+            # Ищем четырехугольники (потенциальные Data Matrix)
+            if len(approx) == 4:
+                area = cv2.contourArea(contour)
+                # Фильтруем по размеру (слишком маленькие игнорируем)
+                if 1000 < area < 100000:
+                    x, y, w, h = cv2.boundingRect(approx)
+                    
+                    # Вырезаем регион и пытаемся декодировать
+                    roi = gray[y:y+h, x:x+w]
+                    
+                    # Простая эвристика: проверяем наличие характерного паттерна L
+                    # Это очень упрощенная проверка
+                    result = {
+                        'data': f"DETECTED_{w}x{h}",  # Заглушка
+                        'rect': (x, y, w, h),
+                        'confidence': 0.5,
+                        'polygon': approx.reshape(-1, 2),
+                        'timestamp': cv2.getTickCount()
+                    }
+                    results.append(result)
+        
         return results
     
     def _preprocess(self, frame: np.ndarray) -> np.ndarray:

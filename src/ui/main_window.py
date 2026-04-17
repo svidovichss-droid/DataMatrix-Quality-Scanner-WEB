@@ -681,7 +681,12 @@ class MainWindow(QMainWindow):
     def _log(self, message: str):
         """Добавление в лог"""
         timestamp = datetime.now().strftime('%H:%M:%S')
-        self.log_text.appendPlainText(f"[{timestamp}] {message}")
+        # Универсальный способ добавления текста в QPlainTextEdit/QTextEdit
+        if hasattr(self.log_text, 'appendPlainText'):
+            self.log_text.appendPlainText(f"[{timestamp}] {message}")
+        else:
+            # Для старых версий PyQt или QTextEdit
+            self.log_text.append(f"[{timestamp}] {message}")
         
     def closeEvent(self, event):
         """Обработка закрытия окна"""
