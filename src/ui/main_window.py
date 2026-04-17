@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QGroupBox, QTableWidget,
     QTableWidgetItem, QStatusBar, QSpinBox, QDoubleSpinBox,
     QComboBox, QCheckBox, QFileDialog, QMessageBox, QSplitter,
-    QHeaderView, QProgressBar, QTextEdit, QTabWidget
+    QHeaderView, QProgressBar, QPlainTextEdit, QTabWidget
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread
 from PyQt6.QtGui import QImage, QPixmap, QFont, QColor, QPalette
@@ -282,7 +282,7 @@ class MainWindow(QMainWindow):
         log_group = QGroupBox("Лог событий")
         log_layout = QVBoxLayout(log_group)
         
-        self.log_text = QTextEdit()
+        self.log_text = QPlainTextEdit()
         self.log_text.setMaximumBlockCount(100)
         self.log_text.setFont(QFont("Consolas", 9))
         log_layout.addWidget(self.log_text)
