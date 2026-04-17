@@ -2,11 +2,21 @@
 
 import cv2
 import numpy as np
-from pylibdmtx.pylibdmtx import decode
 from typing import List, Dict, Optional, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Импорт pylibdmtx с обработкой ошибок для PyInstaller
+try:
+    from pylibdmtx.pylibdmtx import decode
+except ImportError:
+    try:
+        from pylibdmtx import decode
+    except ImportError:
+        # Для случаев когда модуль еще не загружен
+        def decode(*args, **kwargs):
+            raise ImportError("pylibdmtx not available")
 
 
 class DataMatrixDecoder:

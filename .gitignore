@@ -2,14 +2,6 @@
 # Build artifacts
 build/
 dist/
-*.exe
-*.dll
-*.so
-*.a
-*.lib
-*.obj
-*.o
-*.out
 
 # Dependencies
 venv/
@@ -18,43 +10,22 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-env/
-.venv.bak/
-pip-log.txt
-pip-delete-this-directory.txt
 
-# Logs
+# Logs and temp files
 *.log
+*.tmp
 
-# Environment variables
+# Environment
 .env
 .env.local
 *.env.*
 
-# Editors/IDE
+# Editors
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
 
-# Coverage reports
-coverage/
-htmlcov/
-.coverage
-*.cover
-
-# Testing
-.pytest_cache/
-.mypy_cache/
-.hypothesis/
-
-# OS generated
-.DS_Store
-ehthumbs.db
-Icon?
-Thumbs.db
+# Windows-specific
+*.exe
+*.dll
+*.bat.swp
 ```
