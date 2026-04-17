@@ -79,6 +79,7 @@ class CameraThread(QThread):
     """Поток захвата камеры"""
     frame_ready = pyqtSignal(np.ndarray)
     fps_updated = pyqtSignal(float)
+    error_occurred = pyqtSignal(str)
     
     def __init__(self, camera: CameraCapture):
         super().__init__()
@@ -86,19 +87,28 @@ class CameraThread(QThread):
         self.running = False
         
     def run(self):
-        self.running = True
-        self.camera.start()
-        
-        while self.running:
-            frame = self.camera.get_frame(timeout=0.1)
-            if frame is not None:
-                self.frame_ready.emit(frame)
-                self.fps_updated.emit(self.camera.fps_actual)
-                
+        try:
+            self.running = True
+            self.camera.start()
+            
+            while self.running:
+                frame = self.camera.get_frame(timeout=0.1)
+                if frame is not None:
+                    self.frame_ready.emit(frame)
+                    self.fps_updated.emit(self.camera.fps_actual)
+        except Exception as e:
+            logger.error(f"Ошибка в потоке камеры: {e}", exc_info=True)
+            self.error_occurred.emit(str(e))
+        finally:
+            self.running = False
+            
     def stop(self):
         self.running = False
-        self.camera.stop()
-        self.wait()
+        try:
+            self.camera.stop()
+        except Exception as e:
+            logger.warning(f"Ошибка при остановке камеры: {e}")
+        self.wait(2000)  # Ждем максимум 2 секунды
 
 
 class MainWindow(QMainWindow):
@@ -435,50 +445,58 @@ class MainWindow(QMainWindow):
         
     def _on_connect(self):
         """Подключение камеры"""
-        camera_id = self.camera_combo.currentIndex()
-        
-        # Парсинг разрешения
-        res_text = self.res_combo.currentText()
-        width, height = map(int, res_text.split('x'))
-        
-        config = CameraConfig(
-            width=width,
-            height=height,
-            fps=self.fps_spin.value()
-        )
-        
-        self.camera = CameraCapture(config, camera_id)
-        
-        if self.camera.open():
-            self.camera_thread = CameraThread(self.camera)
-            self.camera_thread.frame_ready.connect(self._on_frame_ready)
-            self.camera_thread.fps_updated.connect(self._on_fps_updated)
-            self.camera_thread.start()
+        try:
+            camera_id = self.camera_combo.currentIndex()
             
-            # Инициализация анализатора
-            self.analyzer = ConveyorAnalyzer(
-                save_images=self.save_images_check.isChecked(),
-                min_grade=self.min_grade_spin.value()
+            # Парсинг разрешения
+            res_text = self.res_combo.currentText()
+            width, height = map(int, res_text.split('x'))
+            
+            config = CameraConfig(
+                width=width,
+                height=height,
+                fps=self.fps_spin.value()
             )
-            self.analyzer.register_callback(self._on_inspection_result)
             
-            self.btn_connect.setEnabled(False)
-            self.btn_disconnect.setEnabled(True)
-            self.btn_inspect.setEnabled(True)
+            self.camera = CameraCapture(config, camera_id)
             
-            self._log("Камера подключена успешно")
-        else:
-            QMessageBox.critical(self, "Ошибка", "Не удалось подключить камеру")
+            if self.camera.open():
+                self.camera_thread = CameraThread(self.camera)
+                self.camera_thread.frame_ready.connect(self._on_frame_ready)
+                self.camera_thread.fps_updated.connect(self._on_fps_updated)
+                self.camera_thread.error_occurred.connect(self._on_camera_error)
+                self.camera_thread.start()
+                
+                # Инициализация анализатора
+                self.analyzer = ConveyorAnalyzer(
+                    save_images=self.save_images_check.isChecked(),
+                    min_grade=self.min_grade_spin.value()
+                )
+                self.analyzer.register_callback(self._on_inspection_result)
+                
+                self.btn_connect.setEnabled(False)
+                self.btn_disconnect.setEnabled(True)
+                self.btn_inspect.setEnabled(True)
+                
+                self._log("Камера подключена успешно")
+            else:
+                QMessageBox.critical(self, "Ошибка", "Не удалось подключить камеру")
+        except Exception as e:
+            logger.error(f"Ошибка при подключении камеры: {e}", exc_info=True)
+            QMessageBox.critical(self, "Ошибка", f"Произошла ошибка при подключении камеры:\n\n{e}")
             
     def _on_disconnect(self):
         """Отключение камеры"""
-        if self.camera_thread:
-            self.camera_thread.stop()
-            self.camera_thread = None
-            
-        if self.camera:
-            self.camera.release()
-            self.camera = None
+        try:
+            if self.camera_thread:
+                self.camera_thread.stop()
+                self.camera_thread = None
+                
+            if self.camera:
+                self.camera.release()
+                self.camera = None
+        except Exception as e:
+            logger.error(f"Ошибка при отключении камеры: {e}", exc_info=True)
             
         self.btn_connect.setEnabled(True)
         self.btn_disconnect.setEnabled(False)
@@ -520,42 +538,64 @@ class MainWindow(QMainWindow):
             
     def _on_frame_ready(self, frame: np.ndarray):
         """Обработка нового кадра"""
-        self.current_frame = frame.copy()
-        
-        # Инспекция если включена
-        if self.is_inspecting and self.analyzer:
-            results = self.analyzer.process_frame(frame)
+        try:
+            self.current_frame = frame.copy()
             
-        # Отображение
-        display_frame = frame.copy()
-        
-        # Добавляем оверлей с информацией
-        if self.is_inspecting:
-            cv2.putText(display_frame, "ИНСПЕКЦИЯ АКТИВНА", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                       
-        # Конвертация для Qt
-        rgb_image = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb_image.shape
-        bytes_per_line = ch * w
-        
-        qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-        pixmap = QPixmap.fromImage(qt_image)
-        
-        # Масштабирование
-        scaled_pixmap = pixmap.scaled(
-            self.video_label.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
-        )
-        
-        self.video_label.setPixmap(scaled_pixmap)
+            # Инспекция если включена
+            if self.is_inspecting and self.analyzer:
+                try:
+                    results = self.analyzer.process_frame(frame)
+                except Exception as e:
+                    logger.error(f"Ошибка при анализе кадра: {e}", exc_info=True)
+                    
+            # Отображение
+            display_frame = frame.copy()
+            
+            # Добавляем оверлей с информацией
+            if self.is_inspecting:
+                cv2.putText(display_frame, "ИНСПЕКЦИЯ АКТИВНА", (10, 30),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                           
+            # Конвертация для Qt
+            rgb_image = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            bytes_per_line = ch * w
+            
+            qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(qt_image)
+            
+            # Масштабирование
+            scaled_pixmap = pixmap.scaled(
+                self.video_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            
+            self.video_label.setPixmap(scaled_pixmap)
+        except Exception as e:
+            logger.error(f"Ошибка при отображении кадра: {e}", exc_info=True)
+            self._on_camera_error(f"Ошибка обработки кадра: {e}")
         
     def _on_fps_updated(self, fps: float):
         """Обновление FPS"""
         if self.current_frame is not None:
             h, w = self.current_frame.shape[:2]
             self.frame_info_label.setText(f"FPS: {fps:.1f} | Разрешение: {w}x{h}")
+            
+    def _on_camera_error(self, error_msg: str):
+        """Обработка ошибки камеры"""
+        logger.error(f"Ошибка камеры: {error_msg}")
+        self._log(f"ОШИБКА КАМЕРЫ: {error_msg}")
+        
+        # Показываем сообщение об ошибке
+        QMessageBox.critical(
+            self, 
+            "Ошибка камеры", 
+            f"Произошла ошибка при работе с камерой:\n\n{error_msg}\n\nПопробуйте переподключить камеру."
+        )
+        
+        # Автоматически отключаем камеру
+        self._on_disconnect()
             
     def _on_inspection_result(self, result: InspectionResult):
         """Обработка результата инспекции"""

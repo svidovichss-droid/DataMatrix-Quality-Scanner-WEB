@@ -1,1 +1,19 @@
-Nothing should be ignored based on the provided file changes. The only modified file is a Python source file (`src/ui/main_window.py`), which should not be added to .gitignore.
+```
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+```
