@@ -4,32 +4,41 @@ import cv2
 import numpy as np
 from typing import List, Dict, Optional, Tuple
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
 # Импорт pylibdmtx с обработкой ошибок для PyInstaller
+PYLIBDMTX_AVAILABLE = False
 try:
     from pylibdmtx.pylibdmtx import decode
     PYLIBDMTX_AVAILABLE = True
-except ImportError:
-    try:
-        from pylibdmtx import decode
-        PYLIBDMTX_AVAILABLE = True
-    except ImportError:
-        # Для случаев когда модуль еще не загружен
-        def decode(*args, **kwargs):
-            raise ImportError("pylibdmtx not available")
-        PYLIBDMTX_AVAILABLE = False
+    logger.info("pylibdmtx успешно импортирован")
+except ImportError as e:
+    logger.warning(f"pylibdmtx ImportError: {e}")
+except Exception as e:
+    logger.warning(f"pylibdmtx ошибка инициализации: {e}")
 
 # Импорт pyzbar как альтернативного декодера (поддерживает DataMatrix)
+PYZBAR_AVAILABLE = False
 try:
     from pyzbar import pyzbar
     from pyzbar.pyzbar import ZBarSymbol
     PYZBAR_AVAILABLE = True
-except ImportError:
-    PYZBAR_AVAILABLE = False
-    pyzbar = None
-    ZBarSymbol = None
+    logger.info("pyzbar успешно импортирован")
+except ImportError as e:
+    logger.warning(f"pyzbar ImportError: {e}")
+except Exception as e:
+    logger.warning(f"pyzbar ошибка инициализации: {e}")
+
+# Проверка OpenCV barcode detector
+OPENCV_BARCODE_AVAILABLE = False
+try:
+    detector = cv2.barcode_BarcodeDetector()
+    OPENCV_BARCODE_AVAILABLE = True
+    logger.info("OpenCV barcode detector доступен")
+except Exception as e:
+    logger.warning(f"OpenCV barcode detector недоступен: {e}")
 
 
 class DataMatrixDecoder:
@@ -302,62 +311,67 @@ class DataMatrixDecoder:
         return results
     
     def _detect_with_opencv(self, frame: np.ndarray) -> List[Dict]:
-        """Поиск DataMatrix с помощью OpenCV WeChat QR detector (только локализация)"""
+        """Поиск DataMatrix с помощью OpenCV barcode detector (только локализация)"""
         results = []
         
+        if not OPENCV_BARCODE_AVAILABLE:
+            return results
+        
         try:
-            detector = cv2.wechat_qrcode_WeChatQRCode()
+            detector = cv2.barcode_BarcodeDetector()
             
             # Конвертируем в оттенки серого
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
             
             # Детектируем и декодируем
-            res, points = detector.detectAndDecode(gray)
+            ok, decoded, points = detector.detectAndDecode(gray)
             
-            for i, code_data in enumerate(res):
-                # Для поиска возвращаем даже без данных - главное позиция
-                pts = points[i].astype(int)
-                x, y, w, h = cv2.boundingRect(pts)
-                
-                result = {
-                    'rect': (x, y, w, h),
-                    'polygon': pts,
-                    'timestamp': cv2.getTickCount()
-                }
-                # Проверка на дубликаты по позиции
-                if not any(r['rect'] == result['rect'] for r in results):
-                    results.append(result)
-        except Exception:
-            pass
+            if ok and points is not None:
+                for i, pts in enumerate(points):
+                    pts = pts.astype(int)
+                    x, y, w, h = cv2.boundingRect(pts)
+                    
+                    result = {
+                        'rect': (x, y, w, h),
+                        'polygon': pts,
+                        'timestamp': cv2.getTickCount()
+                    }
+                    # Проверка на дубликаты по позиции
+                    if not any(r['rect'] == result['rect'] for r in results):
+                        results.append(result)
+        except Exception as e:
+            logger.warning(f"OpenCV detect error: {e}")
             
         return results
     
     def _decode_region_with_opencv(self, region: np.ndarray) -> Optional[Dict]:
-        """Декодирование захваченной области с помощью OpenCV"""
+        """Декодирование захваченной области с помощью OpenCV barcode detector"""
+        if not OPENCV_BARCODE_AVAILABLE:
+            return None
+            
         try:
-            detector = cv2.wechat_qrcode_WeChatQRCode()
+            detector = cv2.barcode_BarcodeDetector()
             
             # Конвертируем в оттенки серого
             gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY) if len(region.shape) == 3 else region
             
             # Детектируем и декодируем
-            res, points = detector.detectAndDecode(gray)
+            ok, decoded, points = detector.detectAndDecode(gray)
             
-            for i, code_data in enumerate(res):
-                if code_data:  # Если данные успешно декодированы
-                    pts = points[i].astype(int)
-                    x, y, w, h = cv2.boundingRect(pts)
-                    
-                    result = {
-                        'data': code_data,
-                        'rect': (0, 0, region.shape[1], region.shape[0]),
-                        'confidence': 1.0,
-                        'polygon': pts,
-                        'timestamp': cv2.getTickCount()
-                    }
-                    return result
-        except Exception:
-            pass
+            if ok and decoded:
+                pts = points[0].astype(int) if points is not None else None
+                x, y, w, h = cv2.boundingRect(pts) if pts is not None else (0, 0, region.shape[1], region.shape[0])
+                
+                result = {
+                    'data': decoded[0] if isinstance(decoded, (list, tuple)) else decoded,
+                    'rect': (0, 0, region.shape[1], region.shape[0]),
+                    'confidence': 1.0,
+                    'polygon': pts,
+                    'timestamp': cv2.getTickCount()
+                }
+                return result
+        except Exception as e:
+            logger.warning(f"OpenCV decode error: {e}")
             
         return None
     
@@ -397,36 +411,37 @@ class DataMatrixDecoder:
         return self._non_max_suppression(results)
     
     def _decode_with_opencv(self, frame: np.ndarray) -> List[Dict]:
-        """Декодирование с помощью OpenCV WeChat QR detector"""
+        """Декодирование с помощью OpenCV barcode detector"""
         results = []
         
-        # Создаем детектор WeChat QR (поддерживает DataMatrix)
+        if not OPENCV_BARCODE_AVAILABLE:
+            return results
+        
         try:
-            detector = cv2.wechat_qrcode_WeChatQRCode()
+            detector = cv2.barcode_BarcodeDetector()
             
             # Конвертируем в оттенки серого
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
             
             # Детектируем и декодируем
-            res, points = detector.detectAndDecode(gray)
+            ok, decoded, points = detector.detectAndDecode(gray)
             
-            for i, code_data in enumerate(res):
-                if code_data:  # Если данные успешно декодированы
-                    # Получаем bounding box
-                    pts = points[i].astype(int)
-                    x, y, w, h = cv2.boundingRect(pts)
-                    
-                    result = {
-                        'data': code_data,
-                        'rect': (x, y, w, h),
-                        'confidence': 1.0,
-                        'polygon': pts,
-                        'timestamp': cv2.getTickCount()
-                    }
-                    results.append(result)
-        except Exception:
-            # Альтернативный метод с обычным QR детектором
-            pass
+            if ok and decoded:
+                for i, code_data in enumerate(decoded):
+                    if code_data:
+                        pts = points[i].astype(int) if points is not None and i < len(points) else None
+                        x, y, w, h = cv2.boundingRect(pts) if pts is not None else (0, 0, frame.shape[1], frame.shape[0])
+                        
+                        result = {
+                            'data': code_data,
+                            'rect': (x, y, w, h),
+                            'confidence': 1.0,
+                            'polygon': pts,
+                            'timestamp': cv2.getTickCount()
+                        }
+                        results.append(result)
+        except Exception as e:
+            logger.warning(f"OpenCV decode error: {e}")
             
         return results
     
