@@ -23,16 +23,19 @@ try:
     from scanner.camera_capture import CameraCapture, CameraConfig
     from scanner.quality_analyzer import ConveyorAnalyzer, InspectionResult
     from utils.config import GOSTConfig, AppConfig
+    from utils.sound_notifier import SoundNotifier
 except ImportError:
     try:
         from src.scanner.camera_capture import CameraCapture, CameraConfig
         from src.scanner.quality_analyzer import ConveyorAnalyzer, InspectionResult
         from src.utils.config import GOSTConfig, AppConfig
+        from src.utils.sound_notifier import SoundNotifier
     except ImportError:
         try:
             from camera_capture import CameraCapture, CameraConfig
             from quality_analyzer import ConveyorAnalyzer, InspectionResult
             from config import GOSTConfig, AppConfig
+            from sound_notifier import SoundNotifier
         except ImportError:
             # Fallback for bundled app - dynamic loading
             import sys
@@ -69,6 +72,16 @@ except ImportError:
                 spec.loader.exec_module(config_module)
                 GOSTConfig = config_module.GOSTConfig
                 AppConfig = config_module.AppConfig
+            else:
+                raise
+            
+            # Try to load sound_notifier
+            sound_path = Path(__file__).parent.parent / "utils" / "sound_notifier.py"
+            if sound_path.exists():
+                spec = importlib.util.spec_from_file_location("sound_notifier", sound_path)
+                sound_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(sound_module)
+                SoundNotifier = sound_module.SoundNotifier
             else:
                 raise
 
@@ -126,9 +139,11 @@ class MainWindow(QMainWindow):
         self.camera: Optional[CameraCapture] = None
         self.camera_thread: Optional[CameraThread] = None
         self.analyzer: Optional[ConveyorAnalyzer] = None
+        self.sound_notifier: Optional[SoundNotifier] = None
         
         self.current_frame: Optional[np.ndarray] = None
         self.is_inspecting = False
+        self.scanned_codes_history = []  # История сканирований для предотвращения дубликатов
         
         self._setup_ui()
         self._setup_timer()
@@ -474,6 +489,9 @@ class MainWindow(QMainWindow):
                 )
                 self.analyzer.register_callback(self._on_inspection_result)
                 
+                # Инициализация звукового уведомления
+                self.sound_notifier = SoundNotifier()
+                
                 self.btn_connect.setEnabled(False)
                 self.btn_disconnect.setEnabled(True)
                 self.btn_inspect.setEnabled(True)
@@ -599,6 +617,24 @@ class MainWindow(QMainWindow):
             
     def _on_inspection_result(self, result: InspectionResult):
         """Обработка результата инспекции"""
+        # Проверка на дубликат (защита от повторного сканирования одного кода)
+        code_key = f"{result.barcode_data}_{result.position}"
+        if code_key in self.scanned_codes_history:
+            logger.debug(f"Пропуск дубликата: {result.barcode_data[:20]}")
+            return
+        
+        # Добавляем в историю (храним последние 1000 кодов)
+        self.scanned_codes_history.append(code_key)
+        if len(self.scanned_codes_history) > 1000:
+            self.scanned_codes_history.pop(0)
+        
+        # Воспроизведение звукового сигнала
+        if self.sound_notifier:
+            if result.passed:
+                self.sound_notifier.play_success()
+            else:
+                self.sound_notifier.play_failure()
+        
         # Обновление текущего результата
         grade = result.quality_grades['overall']['grade_letter']
         color = {'A': 'green', 'B': 'lightgreen', 'C': 'orange', 'D': 'red', 'F': 'darkred'}[grade]
@@ -676,6 +712,8 @@ class MainWindow(QMainWindow):
         self.results_table.setRowCount(0)
         if self.analyzer:
             self.analyzer.reset_statistics()
+        # Очистка истории сканирований
+        self.scanned_codes_history.clear()
         self._log("Результаты очищены")
         
     def _log(self, message: str):
