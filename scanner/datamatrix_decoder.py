@@ -221,8 +221,7 @@ class DataMatrixDecoder:
                         img,
                         timeout=min(self.timeout_ms, 500),  # Увеличенный таймаут для поиска
                         max_count=20,
-                        shrink=shrink,
-                        improvements=True  # Включаем улучшения обработки
+                        shrink=shrink
                     )
                     
                     for item in decoded:
@@ -255,8 +254,7 @@ class DataMatrixDecoder:
                         img,
                         timeout=self.timeout_ms * 3,  # Увеличенный таймаут для декодирования
                         max_count=1,
-                        shrink=shrink,
-                        improvements=True  # Включаем улучшения обработки
+                        shrink=shrink
                     )
                     
                     for item in decoded:
@@ -289,8 +287,7 @@ class DataMatrixDecoder:
                         img,
                         timeout=self.timeout_ms * 3,  # Увеличенный таймаут
                         max_count=10,
-                        shrink=shrink,
-                        improvements=True  # Включаем улучшения обработки
+                        shrink=shrink
                     )
                     
                     for item in decoded:
