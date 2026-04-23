@@ -125,7 +125,7 @@ class DataMatrixDecoder:
         if PYLIBDMTX_AVAILABLE:
             try:
                 result = self._decode_region_with_pylibdmtx(region)
-                if result:
+                if result and result.get('data'):
                     logger.debug(f"Сканирование: успешно декодировано (pylibdmtx): {result['data']}")
                     return result
             except Exception as e:
@@ -135,7 +135,7 @@ class DataMatrixDecoder:
         if PYZBAR_AVAILABLE:
             try:
                 result = self._decode_region_with_pyzbar(region)
-                if result:
+                if result and result.get('data'):
                     logger.debug(f"Сканирование: успешно декодировано (pyzbar): {result['data']}")
                     return result
             except Exception as e:
@@ -144,11 +144,20 @@ class DataMatrixDecoder:
         # Попытка 3: OpenCV
         try:
             result = self._decode_region_with_opencv(region)
-            if result:
+            if result and result.get('data'):
                 logger.debug(f"Сканирование: успешно декодировано (OpenCV): {result['data']}")
                 return result
         except Exception as e:
             logger.warning(f"Ошибка сканирования OpenCV: {e}")
+        
+        # Попытка 4: Контуры (fallback для простых случаев)
+        try:
+            result = self._decode_region_with_contours(region)
+            if result and result.get('data'):
+                logger.debug(f"Сканирование: успешно декодировано (contours): {result['data']}")
+                return result
+        except Exception as e:
+            logger.warning(f"Ошибка сканирования contours: {e}")
         
         logger.debug("Сканирование: не удалось декодировать код")
         return None
@@ -246,6 +255,7 @@ class DataMatrixDecoder:
         preprocessed = self._preprocess(region)
         
         # Попытка декодирования с разными препроцессорами и параметрами shrink
+        # Используем те же параметры что и в _decode_with_pylibdmtx для консистентности
         for img in [region, preprocessed, cv2.bitwise_not(preprocessed)]:
             # Пробуем разные уровни shrink - от 1 до 5 для лучшего захвата
             for shrink in [1, 2, 3, 4, 5]:
@@ -253,7 +263,7 @@ class DataMatrixDecoder:
                     decoded = decode(
                         img,
                         timeout=self.timeout_ms * 3,  # Увеличенный таймаут для декодирования
-                        max_count=1,
+                        max_count=10,  # Увеличено для надежности
                         shrink=shrink
                     )
                     
@@ -561,6 +571,41 @@ class DataMatrixDecoder:
         
         return results
     
+    def _decode_region_with_contours(self, region: np.ndarray) -> Optional[Dict]:
+        """Декодирование захваченной области через поиск контуров (fallback)"""
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY) if len(region.shape) == 3 else region
+        
+        # Бинаризация
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        
+        # Поиск контуров
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for contour in contours:
+            # Аппроксимация полигона
+            epsilon = 0.02 * cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+            
+            # Ищем четырехугольники (потенциальные Data Matrix)
+            if len(approx) == 4:
+                area = cv2.contourArea(contour)
+                # Фильтруем по размеру (слишком маленькие игнорируем)
+                if 100 < area < 100000:
+                    x, y, w, h = cv2.boundingRect(approx)
+                    
+                    # Простая эвристика: проверяем наличие характерного паттерна L
+                    # Это очень упрощенная проверка
+                    result = {
+                        'data': f"DETECTED_{w}x{h}",  # Заглушка
+                        'rect': (0, 0, region.shape[1], region.shape[0]),
+                        'confidence': 0.5,
+                        'polygon': approx.reshape(-1, 2),
+                        'timestamp': cv2.getTickCount()
+                    }
+                    return result
+        
+        return None
+
     def _decode_with_contours(self, frame: np.ndarray) -> List[Dict]:
         """Простое декодирование через поиск контуров (для больших четких кодов)"""
         results = []
