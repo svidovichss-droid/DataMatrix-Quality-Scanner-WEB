@@ -218,17 +218,20 @@ class DataMatrixDecoder:
         """Поиск DataMatrix с помощью pylibdmtx (только локализация)"""
         results = []
         
-        # Предобработка для улучшения детектирования
-        preprocessed = self._preprocess(frame)
+        # Расширенная предобработка для улучшения детектирования
+        preprocessed_images = self._preprocess_enhanced(frame)
+        
+        # Добавляем оригинальное изображение и инверсии ключевых вариантов
+        all_images = [frame] + preprocessed_images + [cv2.bitwise_not(img) for img in preprocessed_images[:2]]
         
         # Попытка детектирования с разными препроцессорами и параметрами shrink
-        for img in [frame, preprocessed, cv2.bitwise_not(preprocessed)]:
-            # Пробуем разные уровни shrink - от 1 до 5 для лучшего захвата
-            for shrink in [1, 2, 3, 4, 5]:
+        for img in all_images:
+            # Пробуем разные уровни shrink - от 1 до 4 для баланса скорости/качества
+            for shrink in [1, 2, 3, 4]:
                 try:
                     decoded = decode(
                         img,
-                        timeout=min(self.timeout_ms, 500),  # Увеличенный таймаут для поиска
+                        timeout=min(self.timeout_ms, 300),  # Таймаут для поиска
                         max_count=20,
                         shrink=shrink
                     )
@@ -251,19 +254,21 @@ class DataMatrixDecoder:
     
     def _decode_region_with_pylibdmtx(self, region: np.ndarray) -> Optional[Dict]:
         """Декодирование захваченной области с помощью pylibdmtx"""
-        # Предобработка для улучшения декодирования
-        preprocessed = self._preprocess(region)
+        # Расширенная предобработка для улучшения декодирования
+        preprocessed_images = self._preprocess_enhanced(region)
+        
+        # Добавляем оригинальное изображение и инверсии ключевых вариантов
+        all_images = [region] + preprocessed_images + [cv2.bitwise_not(img) for img in preprocessed_images[:2]]
         
         # Попытка декодирования с разными препроцессорами и параметрами shrink
-        # Используем те же параметры что и в _decode_with_pylibdmtx для консистентности
-        for img in [region, preprocessed, cv2.bitwise_not(preprocessed)]:
-            # Пробуем разные уровни shrink - от 1 до 5 для лучшего захвата
-            for shrink in [1, 2, 3, 4, 5]:
+        for img in all_images:
+            # Пробуем разные уровни shrink - от 1 до 4 для баланса скорости/качества
+            for shrink in [1, 2, 3, 4]:
                 try:
                     decoded = decode(
                         img,
-                        timeout=self.timeout_ms * 3,  # Увеличенный таймаут для декодирования
-                        max_count=10,  # Увеличено для надежности
+                        timeout=self.timeout_ms * 2,  # Увеличенный таймаут для декодирования
+                        max_count=5,
                         shrink=shrink
                     )
                     
@@ -285,18 +290,21 @@ class DataMatrixDecoder:
         """Декодирование с помощью pylibdmtx (полная операция)"""
         results = []
         
-        # Предобработка для улучшения декодирования
-        preprocessed = self._preprocess(frame)
+        # Расширенная предобработка для улучшения декодирования
+        preprocessed_images = self._preprocess_enhanced(frame)
+        
+        # Добавляем оригинальное изображение и инверсии ключевых вариантов
+        all_images = [frame] + preprocessed_images + [cv2.bitwise_not(img) for img in preprocessed_images[:2]]
         
         # Попытка декодирования с разными препроцессорами и параметрами shrink
-        for img in [frame, preprocessed, cv2.bitwise_not(preprocessed)]:
-            # Пробуем разные уровни shrink - от 1 до 5 для лучшего захвата
-            for shrink in [1, 2, 3, 4, 5]:
+        for img in all_images:
+            # Пробуем разные уровни shrink - от 1 до 4 для баланса скорости/качества
+            for shrink in [1, 2, 3, 4]:
                 try:
                     decoded = decode(
                         img,
-                        timeout=self.timeout_ms * 3,  # Увеличенный таймаут
-                        max_count=10,
+                        timeout=self.timeout_ms * 2,  # Увеличенный таймаут
+                        max_count=5,
                         shrink=shrink
                     )
                     
@@ -456,53 +464,50 @@ class DataMatrixDecoder:
         """Поиск DataMatrix с помощью pyzbar (только локализация)"""
         results = []
         
-        # Конвертируем в оттенки серого если нужно
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+        # Расширенная предобработка для улучшения детектирования
+        preprocessed_images = self._preprocess_enhanced(frame)
         
-        try:
-            # Декодируем - pyzbar по умолчанию декодирует все типы включая DataMatrix
-            # Не указываем symbols чтобы декодировать все типы
-            decoded_objects = pyzbar.decode(gray)
-            
-            for obj in decoded_objects:
-                # pyzbar возвращает type='DATAMATRIX' для Data Matrix кодов
-                # Также проверяем на 'DATABAR' который может содержать DataMatrix
-                if obj.type in ['DATAMATRIX']:
-                    # Получаем bounding box
-                    points = obj.polygon
-                    if points:
-                        pts = np.array([(p.x, p.y) for p in points], dtype=np.int32)
-                        x, y, w, h = cv2.boundingRect(pts)
-                        
-                        result = {
-                            'rect': (x, y, w, h),
-                            'polygon': pts,
-                            'timestamp': cv2.getTickCount()
-                        }
-                        # Проверка на дубликаты по позиции
-                        if not any(r['rect'] == result['rect'] for r in results):
-                            results.append(result)
-        except Exception as e:
-            logger.warning(f"Ошибка pyzbar detect: {e}")
-            
-        return results
-    
-    def _decode_region_with_pyzbar(self, region: np.ndarray) -> Optional[Dict]:
-        """Декодирование захваченной области с помощью pyzbar"""
-        # Конвертируем в оттенки серого если нужно
-        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY) if len(region.shape) == 3 else region
+        # Добавляем инверсии ключевых вариантов
+        all_images = [frame] + preprocessed_images + [cv2.bitwise_not(img) for img in preprocessed_images[:2]]
         
-        # Предобработка для улучшения декодирования
-        preprocessed = self._preprocess(region)
-        
-        # Пробуем разные варианты изображения
-        for img in [gray, preprocessed, cv2.bitwise_not(preprocessed)]:
+        for img in all_images:
             try:
                 # Декодируем - pyzbar по умолчанию декодирует все типы включая DataMatrix
                 decoded_objects = pyzbar.decode(img)
                 
                 for obj in decoded_objects:
-                    # Проверяем что это DataMatrix
+                    if obj.type in ['DATAMATRIX']:
+                        points = obj.polygon
+                        if points:
+                            pts = np.array([(p.x, p.y) for p in points], dtype=np.int32)
+                            x, y, w, h = cv2.boundingRect(pts)
+                            
+                            result = {
+                                'rect': (x, y, w, h),
+                                'polygon': pts,
+                                'timestamp': cv2.getTickCount()
+                            }
+                            if not any(r['rect'] == result['rect'] for r in results):
+                                results.append(result)
+            except Exception as e:
+                logger.warning(f"Ошибка pyzbar detect: {e}")
+            
+        return results
+    
+    def _decode_region_with_pyzbar(self, region: np.ndarray) -> Optional[Dict]:
+        """Декодирование захваченной области с помощью pyzbar"""
+        # Расширенная предобработка для улучшения декодирования
+        preprocessed_images = self._preprocess_enhanced(region)
+        
+        # Добавляем инверсии ключевых вариантов
+        all_images = [region] + preprocessed_images + [cv2.bitwise_not(img) for img in preprocessed_images[:2]]
+        
+        # Пробуем разные варианты изображения
+        for img in all_images:
+            try:
+                decoded_objects = pyzbar.decode(img)
+                
+                for obj in decoded_objects:
                     if obj.data and obj.type == 'DATAMATRIX':
                         points = obj.polygon
                         if points:
@@ -530,20 +535,18 @@ class DataMatrixDecoder:
         """Декодирование с помощью pyzbar (полная операция)"""
         results = []
         
-        # Конвертируем в оттенки серого если нужно
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+        # Расширенная предобработка для улучшения декодирования
+        preprocessed_images = self._preprocess_enhanced(frame)
         
-        # Предобработка для улучшения декодирования
-        preprocessed = self._preprocess(frame)
+        # Добавляем инверсии ключевых вариантов
+        all_images = [frame] + preprocessed_images + [cv2.bitwise_not(img) for img in preprocessed_images[:2]]
         
         # Пробуем разные варианты изображения
-        for img in [gray, preprocessed, cv2.bitwise_not(preprocessed)]:
+        for img in all_images:
             try:
-                # Декодируем - pyzbar по умолчанию декодирует все типы включая DataMatrix
                 decoded_objects = pyzbar.decode(img)
                 
                 for obj in decoded_objects:
-                    # Проверяем что это DataMatrix
                     if obj.data and obj.type == 'DATAMATRIX':
                         points = obj.polygon
                         if points:
@@ -667,6 +670,76 @@ class DataMatrixDecoder:
         )
         
         return binary
+    
+    def _preprocess_enhanced(self, frame: np.ndarray) -> List[np.ndarray]:
+        """
+        Расширенная предобработка с множественными вариантами
+        Возвращает список изображений для перебора
+        
+        Args:
+            frame: Исходное изображение
+            
+        Returns:
+            Список предварительно обработанных изображений (оптимизированный набор)
+        """
+        results = []
+        
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+        h, w = gray.shape
+        
+        # 1. Оригинальное серое
+        results.append(gray)
+        
+        # 2. Бинаризация Оцу (самый надежный метод)
+        _, binary_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        results.append(binary_otsu)
+        
+        # 3. Инвертированная бинаризация Оцу
+        _, binary_otsu_inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        results.append(binary_otsu_inv)
+        
+        # 4. CLAHE для улучшения контраста
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
+        results.append(enhanced)
+        
+        # 5. Адаптивная бинаризация (для неравномерного освещения)
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        block_size = min(h, w) // 8
+        if block_size % 2 == 0:
+            block_size += 1
+        if block_size >= 3:
+            binary_adaptive = cv2.adaptiveThreshold(
+                blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY, block_size, 5
+            )
+            results.append(binary_adaptive)
+        
+        return results
+    
+    def _preprocess_fast(self, frame: np.ndarray) -> List[np.ndarray]:
+        """
+        Быстрая предобработка для decode_frame (минимум вариантов для скорости)
+        
+        Args:
+            frame: Исходное изображение
+            
+        Returns:
+            Список из 3 основных вариантов
+        """
+        results = []
+        
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+        
+        # Только 3 самых эффективных варианта
+        results.append(gray)
+        
+        _, binary_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        results.append(binary_otsu)
+        
+        results.append(cv2.bitwise_not(binary_otsu))
+        
+        return results
     
     def _non_max_suppression(self, detections: List[Dict], iou_threshold: float = 0.5) -> List[Dict]:
         """
