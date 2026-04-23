@@ -1,14 +1,16 @@
 ```
-# Compiled Python files
-*.pyc
+# Python
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
 
 # Logs and temp files
 *.log
 *.tmp
 *.swp
 
-# Environment files
+# Environment
 .env
 .env.local
 *.env.*
@@ -22,12 +24,7 @@ __pycache__/
 venv/
 node_modules/
 
-# Coverage reports
-.coverage
-coverage/
-htmlcov/
-
-# Build directories
+# Build artifacts
 dist/
 build/
 target/

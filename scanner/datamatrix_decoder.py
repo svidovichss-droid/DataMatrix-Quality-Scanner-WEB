@@ -309,8 +309,15 @@ class DataMatrixDecoder:
                     )
                     
                     for item in decoded:
+                        data_str = item.data.decode('utf-8')
+                        
+                        # Дополнительная валидация данных для предотвращения ложных срабатываний
+                        if not self._validate_datamatrix_data(data_str, img):
+                            logger.debug(f"Отклонено ложное срабатывание pylibdmtx: {data_str}")
+                            continue
+                        
                         result = {
-                            'data': item.data.decode('utf-8'),
+                            'data': data_str,
                             'rect': (item.rect.left, item.rect.top, 
                                     item.rect.width, item.rect.height),
                             'confidence': getattr(item, 'quality', 0),
@@ -444,6 +451,11 @@ class DataMatrixDecoder:
             if ok and decoded:
                 for i, code_data in enumerate(decoded):
                     if code_data:
+                        # Валидация данных для предотвращения ложных срабатываний
+                        if not self._validate_datamatrix_data(code_data, frame):
+                            logger.debug(f"Отклонено ложное срабатывание OpenCV: {code_data}")
+                            continue
+                        
                         pts = points[i].astype(int) if points is not None and i < len(points) else None
                         x, y, w, h = cv2.boundingRect(pts) if pts is not None else (0, 0, frame.shape[1], frame.shape[0])
                         
@@ -548,6 +560,14 @@ class DataMatrixDecoder:
                 
                 for obj in decoded_objects:
                     if obj.data and obj.type == 'DATAMATRIX':
+                        # Дополнительная валидация данных для предотвращения ложных срабатываний
+                        data_str = obj.data.decode('utf-8')
+                        
+                        # Фильтруем подозрительные данные (слишком короткие, шаблонные или невалидные)
+                        if not self._validate_datamatrix_data(data_str, img):
+                            logger.debug(f"Отклонено ложное срабатывание pyzbar: {data_str}")
+                            continue
+                        
                         points = obj.polygon
                         if points:
                             pts = np.array([(p.x, p.y) for p in points], dtype=np.int32)
@@ -559,7 +579,7 @@ class DataMatrixDecoder:
                             x, y, w, h = 0, 0, frame.shape[1], frame.shape[0]
                         
                         result = {
-                            'data': obj.data.decode('utf-8'),
+                            'data': data_str,
                             'rect': (x, y, w, h),
                             'confidence': getattr(obj, 'quality', 1.0),
                             'polygon': pts,
@@ -598,8 +618,15 @@ class DataMatrixDecoder:
                     
                     # Простая эвристика: проверяем наличие характерного паттерна L
                     # Это очень упрощенная проверка
+                    data_str = f"DETECTED_{w}x{h}"  # Заглушка
+                    
+                    # ВАЖНО: Валидируем данные - это предотвратит ложные срабатывания на градиентах
+                    if not self._validate_datamatrix_data(data_str, region):
+                        logger.debug(f"Отклонено ложное срабатывание contours: {data_str}")
+                        continue
+                    
                     result = {
-                        'data': f"DETECTED_{w}x{h}",  # Заглушка
+                        'data': data_str,
                         'rect': (0, 0, region.shape[1], region.shape[0]),
                         'confidence': 0.5,
                         'polygon': approx.reshape(-1, 2),
@@ -638,8 +665,15 @@ class DataMatrixDecoder:
                     
                     # Простая эвристика: проверяем наличие характерного паттерна L
                     # Это очень упрощенная проверка
+                    data_str = f"DETECTED_{w}x{h}"  # Заглушка
+                    
+                    # ВАЖНО: Валидируем данные - это предотвратит ложные срабатывания на градиентах
+                    if not self._validate_datamatrix_data(data_str, roi):
+                        logger.debug(f"Отклонено ложное срабатывание contours: {data_str}")
+                        continue
+                    
                     result = {
-                        'data': f"DETECTED_{w}x{h}",  # Заглушка
+                        'data': data_str,
                         'rect': (x, y, w, h),
                         'confidence': 0.5,
                         'polygon': approx.reshape(-1, 2),
@@ -1043,6 +1077,67 @@ class DataMatrixVerifier:
             'passed': grade >= 2.0,
             'details': f"Decodability = {decodability_score:.1f}%"
         }
+    
+    def _grade_to_letter(self, grade: float) -> str:
+        """Преобразование числовой оценки в буквенную"""
+        for threshold, letter in sorted(self.GRADE_THRESHOLDS.items(), reverse=True):
+            if grade >= threshold:
+                return letter
+    
+    def _validate_datamatrix_data(self, data: str, image: np.ndarray) -> bool:
+        """
+        Валидация декодированных данных для предотвращения ложных срабатываний
+        
+        Args:
+            data: Декодированная строка данных
+            image: Изображение, из которого получены данные
+            
+        Returns:
+            True если данные валидны, False если это вероятное ложное срабатывание
+        """
+        # Проверка 1: Пустые или слишком короткие данные
+        if not data or len(data.strip()) == 0:
+            return False
+        
+        # Проверка 2: Подозрительные шаблонные строки (артефакты декодера)
+        suspicious_patterns = [
+            r'^DETECTED_\d+x\d+$',  # Например "DETECTED_201x400"
+            r'^\d+x\d+$',  # Просто размеры типа "201x400"
+            r'^[A-Z]+_\d+_\d+$',  # Шаблонные идентификаторы
+            r'^null$',  # JSON null
+            r'^undefined$',  # JS undefined
+        ]
+        
+        for pattern in suspicious_patterns:
+            if re.match(pattern, data, re.IGNORECASE):
+                logger.debug(f"Обнаружен подозрительный паттерн '{pattern}': {data}")
+                return False
+        
+        # Проверка 3: Данные состоят только из цифр и букв без смысла (случайный шум)
+        # Если строка очень короткая (< 4 символов) и не похожа на реальный код
+        if len(data) < 4:
+            # Проверяем соотношение сторон изображения - у Data Matrix обычно квадрат
+            h, w = image.shape[:2]
+            aspect_ratio = max(w, h) / min(w, h)
+            # Если изображение сильно вытянутое (градиент), это скорее всего ложное срабатывание
+            if aspect_ratio > 2.5:
+                logger.debug(f"Отклонено: вытянутое изображение (AR={aspect_ratio:.2f}), короткие данные: {data}")
+                return False
+        
+        # Проверка 4: Проверка на наличие характерных для Data Matrix структур данных
+        # Реальные Data Matrix коды обычно содержат:
+        # - Серийные номера (алфанумерика)
+        # - URL (начинаются с http/https)
+        # - Идентификаторы приложений GS1 (начинаются с (01), (21), etc.)
+        # - Произвольные ASCII символы
+        
+        # Если данные выглядят как полный мусор (непечатные символы), отклоняем
+        printable_count = sum(1 for c in data if c.isprintable())
+        if len(data) > 0 and printable_count / len(data) < 0.8:
+            logger.debug(f"Отклонено: много непечатных символов ({printable_count}/{len(data)})")
+            return False
+        
+        return True
     
     def _grade_to_letter(self, grade: float) -> str:
         """Преобразование числовой оценки в буквенную"""
