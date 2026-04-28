@@ -80,7 +80,7 @@ class DataMatrixDecoder:
         
         return results
     
-    def decode_region(self, region: np.ndarray) -> Optional[Dict]:
+    def decode_region(self, region: np.ndarray, add_margin: bool = True, margin_size: int = 10) -> Optional[Dict]:
         """
         Шаг 3: СКАНИРОВАНИЕ - декодирование захваченной области
         
@@ -88,15 +88,35 @@ class DataMatrixDecoder:
         
         Args:
             region: Вырезанная область изображения с кодом
+            add_margin: Добавлять ли поля (quiet zone) вокруг региона
+            margin_size: Размер полей в пикселях (по умолчанию 10)
             
         Returns:
             Dict с данными ('data') или None если декодирование не удалось
         """
+        # Добавляем поля (quiet zone) если регион был вырезан точно по границам кода
+        if add_margin:
+            padded = cv2.copyMakeBorder(
+                region,
+                top=margin_size,
+                bottom=margin_size,
+                left=margin_size,
+                right=margin_size,
+                borderType=cv2.BORDER_CONSTANT,
+                value=255  # Белый фон для Data Matrix
+            )
+        else:
+            padded = region
+        
         # Попытка 1: pylibdmtx
         if PYLIBDMTX_AVAILABLE:
             try:
-                result = self._decode_region_with_pylibdmtx(region)
+                result = self._decode_region_with_pylibdmtx(padded)
                 if result:
+                    # Корректируем rect относительно оригинального региона
+                    if add_margin:
+                        result['rect'] = (margin_size, margin_size, 
+                                         region.shape[1], region.shape[0])
                     logger.debug(f"Сканирование: успешно декодировано (pylibdmtx): {result['data']}")
                     return result
             except Exception as e:
@@ -104,8 +124,12 @@ class DataMatrixDecoder:
         
         # Попытка 2: OpenCV
         try:
-            result = self._decode_region_with_opencv(region)
+            result = self._decode_region_with_opencv(padded)
             if result:
+                # Корректируем rect относительно оригинального региона
+                if add_margin:
+                    result['rect'] = (margin_size, margin_size, 
+                                     region.shape[1], region.shape[0])
                 logger.debug(f"Сканирование: успешно декодировано (OpenCV): {result['data']}")
                 return result
         except Exception as e:
