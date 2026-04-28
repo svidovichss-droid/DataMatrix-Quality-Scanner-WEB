@@ -1,4 +1,1 @@
-```
-# CI/CD
-.github/
-```
+Nothing should be ignored based on the provided file changes. The only modified file is a Python source code file (`scanner/datamatrix_decoder.py`), which should not be added to .gitignore.
