@@ -23,8 +23,8 @@ jobs:
 
     - name: Install system dependencies
       run: |
-        choco install -y vcredist140 --no-progress
-        pip install --upgrade pip
+        choco install -y vcredist140 --no-progress --force || true
+        python.exe -m pip install --upgrade pip --user || true
 
     - name: Install Python dependencies
       run: |
