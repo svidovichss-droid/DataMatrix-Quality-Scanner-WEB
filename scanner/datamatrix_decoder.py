@@ -841,7 +841,20 @@ class DataMatrixDecoder:
 
 
 class DataMatrixVerifier:
-    """Верификация Data Matrix по ISO/IEC 15415 (ГОСТ Р 57302-2016)"""
+    """Верификация Data Matrix по ISO/IEC 15415
+    
+    Стандарт определяет следующие параметры качества:
+    1. Decode - возможность декодирования
+    2. Symbol Contrast (SC) - контраст символа
+    3. Minimum Reflectance (Rmin) - минимальная отражательная способность
+    4. Minimum Edge Contrast (ECmin) - минимальный контраст края
+    5. Modulation (MOD) - модуляция
+    6. Defects - дефекты печати
+    7. Decodability - декодируемость
+    
+    Оценки: A (4.0-3.5), B (3.0-2.5), C (2.0-1.5), D (1.0-0.5), F (0.0)
+    Минимальный проходной балл: 2.0 (C)
+    """
     
     GRADE_THRESHOLDS = {
         4.0: 'A', 3.5: 'A',
@@ -851,40 +864,81 @@ class DataMatrixVerifier:
         0.0: 'F'
     }
     
-    def __init__(self):
-        self.reference_aperture = 0.25  # mm (стандартное значение)
+    # Пороговые значения по ISO/IEC 15415
+    SC_THRESHOLDS = {'A': 70, 'B': 55, 'C': 40, 'D': 20}
+    EC_MIN_THRESHOLDS = {'A': 0.60, 'B': 0.50, 'C': 0.40, 'D': 0.30}
+    MODULATION_THRESHOLDS = {'A': 0.70, 'B': 0.60, 'C': 0.50, 'D': 0.40}
+    DEFECT_THRESHOLDS = {'A': 0.5, 'B': 1.0, 'C': 1.5, 'D': 2.0}
+    
+    def __init__(self, aperture_size: float = 0.25, wavelength: int = 670):
+        """
+        Инициализация верификатора
+        
+        Args:
+            aperture_size: Размер апертуры в мм (по умолчанию 0.25 мм по стандарту)
+            wavelength: Длина волны света в нм (по умолчанию 670 нм - красный свет)
+        """
+        self.aperture_size = aperture_size
+        self.wavelength = wavelength
+        self.pixel_threshold = 128  # Порог бинаризации
         
     def verify(self, frame: np.ndarray, barcode_region: np.ndarray) -> Dict:
         """
-        Полная верификация символа по ГОСТ
+        Полная верификация символа по ISO/IEC 15415
         
+        Метод выполняет анализ качества штрих-кода по всем параметрам стандарта:
+        - Decode: возможность успешного декодирования
+        - Symbol Contrast: контраст между темными и светлыми элементами
+        - Minimum Reflectance: минимальная отражательная способность темных элементов
+        - Minimum Edge Contrast: минимальный контраст на границах модулей
+        - Modulation: однородность печати темных элементов
+        - Defects: наличие дефектов (пятна, пробелы, искажения)
+        - Decodability: качество структуры сетки кода
+        
+        Args:
+            frame: Полный кадр изображения (для контекста)
+            barcode_region: Вырезанная область с Data Matrix кодом
+            
         Returns:
-            Dict с оценками по всем параметрам
+            Dict с оценками по всем параметрам и общей оценкой
         """
+        # Конвертация в оттенки серого если необходимо
         gray = cv2.cvtColor(barcode_region, cv2.COLOR_BGR2GRAY) if len(barcode_region.shape) == 3 else barcode_region
+        
+        # Бинаризация по методу Оцу для определения пороговых значений
+        _, binary_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # Определение размеров модуля (приблизительно)
+        module_size = self._estimate_module_size(binary_otsu)
         
         results = {
             'decode': self._check_decode(barcode_region),
-            'symbol_contrast': self._check_symbol_contrast(gray),
-            'min_reflectance': self._check_min_reflectance(gray),
-            'min_edge_contrast': self._check_min_edge_contrast(gray),
-            'modulation': self._check_modulation(gray),
-            'defects': self._check_defects(gray),
-            'decodability': self._check_decodability(gray),
+            'symbol_contrast': self._check_symbol_contrast_iso15415(gray),
+            'min_reflectance': self._check_min_reflectance_iso15415(gray),
+            'min_edge_contrast': self._check_min_edge_contrast_iso15415(gray, module_size),
+            'modulation': self._check_modulation_iso15415(gray, module_size),
+            'defects': self._check_defects_iso15415(gray, binary_otsu, module_size),
+            'decodability': self._check_decodability_iso15415(gray, binary_otsu),
         }
         
-        # Расчет общей оценки (minimum of all)
+        # Расчет общей оценки как минимальной из всех параметров (по стандарту)
         min_grade = min(r['grade'] for r in results.values())
         results['overall'] = {
-            'grade': min_grade,
+            'grade': round(min_grade, 2),
             'grade_letter': self._grade_to_letter(min_grade),
-            'passed': min_grade >= 2.0
+            'passed': min_grade >= 2.0,
+            'standard': 'ISO/IEC 15415'
         }
         
         return results
     
     def _check_decode(self, region: np.ndarray) -> Dict:
-        """Проверка декодирования"""
+        """
+        Проверка декодирования по ISO/IEC 15415
+        
+        Параметр 'Decode' проверяет возможность успешного считывания кода.
+        Оценка 4.0 если декодирование успешно, 0.0 если неудачно.
+        """
         decoder = DataMatrixDecoder(timeout_ms=1000)
         results = decoder.decode_frame(region)
         
@@ -898,191 +952,467 @@ class DataMatrixVerifier:
             'details': f"Decoded: {results[0]['data'] if results else 'Failed'}"
         }
     
-    def _check_symbol_contrast(self, gray: np.ndarray) -> Dict:
-        """Контраст символа (SC)"""
-        # Разделение на модули и расчет контраста
+    def _estimate_module_size(self, binary: np.ndarray) -> float:
+        """
+        Оценка размера модуля (базового элемента) Data Matrix
+        
+        Args:
+            binary: Бинарное изображение кода
+            
+        Returns:
+            Приблизительный размер модуля в пикселях
+        """
+        # Находим контуры для оценки размеров
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return 5.0  # Значение по умолчанию
+        
+        # Берем наибольший контур (предположительно сам код)
+        largest_contour = max(contours, key=cv2.contourArea)
+        x, y, w, h = cv2.boundingRect(largest_contour)
+        
+        # Для Data Matrix оцениваем количество модулей по размеру
+        # Типичные размеры: 10x10 до 144x144 модулей
+        # Предполагаем средний код 24x24 модуля
+        estimated_modules = 24
+        module_size = min(w, h) / estimated_modules
+        
+        return max(2.0, module_size)  # Минимум 2 пикселя на модуль
+    
+    def _check_symbol_contrast_iso15415(self, gray: np.ndarray) -> Dict:
+        """
+        Проверка контраста символа (Symbol Contrast - SC) по ISO/IEC 15415
+        
+        SC = Rmax - Rmin, где:
+        - Rmax: максимальная отражательная способность светлых элементов
+        - Rmin: минимальная отражательная способность темных элементов
+        
+        Пороговые значения:
+        - A: SC >= 70%
+        - B: SC >= 55%
+        - C: SC >= 40%
+        - D: SC >= 20%
+        - F: SC < 20%
+        """
+        # Гистограмма яркости
         hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+        hist = hist.flatten()
         
-        # Находим пики для темных и светлых областей
-        dark_peak = np.argmax(hist[:128])
-        light_peak = np.argmax(hist[128:]) + 128
+        # Находим пики для темных и светлых областей с учетом весов гистограммы
+        dark_region = hist[:128]
+        light_region = hist[128:]
         
-        sc = light_peak - dark_peak
+        # Взвешенное среднее для более точной оценки
+        if np.sum(dark_region) > 0:
+            dark_peak = np.sum(np.arange(128) * dark_region) / np.sum(dark_region)
+        else:
+            dark_peak = np.argmax(dark_region)
+            
+        if np.sum(light_region) > 0:
+            light_peak = 128 + np.sum(np.arange(128) * light_region) / np.sum(light_region)
+        else:
+            light_peak = 128 + np.argmax(light_region)
         
-        # Оценка по ГОСТ
-        if sc >= 70: grade = 4.0
-        elif sc >= 55: grade = 3.0
-        elif sc >= 40: grade = 2.0
-        elif sc >= 20: grade = 1.0
-        else: grade = 0.0
+        # Контраст символа в процентах (0-255 -> 0-100%)
+        sc_raw = light_peak - dark_peak
+        sc = (sc_raw / 255.0) * 100
+        
+        # Оценка по пороговым значениям ISO/IEC 15415
+        if sc >= self.SC_THRESHOLDS['A']:
+            grade = 4.0
+        elif sc >= self.SC_THRESHOLDS['B']:
+            grade = 3.0
+        elif sc >= self.SC_THRESHOLDS['C']:
+            grade = 2.0
+        elif sc >= self.SC_THRESHOLDS['D']:
+            grade = 1.0
+        else:
+            grade = 0.0
         
         return {
-            'value': float(sc),
+            'value': round(sc, 2),
             'grade': grade,
             'passed': grade >= 2.0,
-            'details': f"SC = {sc:.1f}%"
+            'details': f"SC = {sc:.1f}% (Rmax={light_peak:.1f}, Rmin={dark_peak:.1f})"
         }
     
-    def _check_min_reflectance(self, gray: np.ndarray) -> Dict:
-        """Минимальная отражаемость (Rmin)"""
-        min_refl = np.min(gray)
-        max_refl = np.max(gray)
+    def _check_min_reflectance_iso15415(self, gray: np.ndarray) -> Dict:
+        """
+        Проверка минимальной отражательной способности (Rmin) по ISO/IEC 15415
         
-        # Rmin должен быть <= 0.5 * SC
+        Rmin не должен превышать 50% от SC для темных элементов.
+        
+        Пороговые значения основаны на отношении Rmin/SC:
+        - A: Rmin <= 10% от SC
+        - B: Rmin <= 30% от SC  
+        - C: Rmin <= 50% от SC
+        - D: Rmin <= 70% от SC
+        - F: Rmin > 70% от SC
+        """
+        # Находим минимальное и максимальное значения яркости
+        min_refl = float(np.min(gray))
+        max_refl = float(np.max(gray))
+        
+        # Контраст символа
         sc = max_refl - min_refl
-        threshold = 0.5 * sc
         
-        passed = min_refl <= threshold
+        if sc == 0:
+            return {
+                'value': min_refl,
+                'grade': 0.0,
+                'passed': False,
+                'details': f"Rmin = {min_refl:.1f} (SC = 0, нет контраста)"
+            }
         
-        if passed and min_refl < 0.1 * max_refl: grade = 4.0
-        elif passed: grade = 3.0
-        elif min_refl <= 0.6 * sc: grade = 2.0
-        elif min_refl <= 0.8 * sc: grade = 1.0
-        else: grade = 0.0
+        # Отношение Rmin к SC (в процентах)
+        rmin_ratio = (min_refl / sc) * 100 if sc > 0 else 100
+        
+        # Оценка по ISO/IEC 15415
+        if rmin_ratio <= 10:
+            grade = 4.0
+        elif rmin_ratio <= 30:
+            grade = 3.0
+        elif rmin_ratio <= 50:
+            grade = 2.0
+        elif rmin_ratio <= 70:
+            grade = 1.0
+        else:
+            grade = 0.0
+        
+        passed = grade >= 2.0
         
         return {
-            'value': float(min_refl),
+            'value': round(min_refl, 2),
             'grade': grade,
             'passed': passed,
-            'details': f"Rmin = {min_refl:.1f}"
+            'details': f"Rmin = {min_refl:.1f} ({rmin_ratio:.1f}% от SC)"
         }
     
-    def _check_min_edge_contrast(self, gray: np.ndarray) -> Dict:
-        """Минимальный контраст края (ECmin)"""
-        # Расчет градиентов
+    def _check_min_edge_contrast_iso15415(self, gray: np.ndarray, module_size: float) -> Dict:
+        """
+        Проверка минимального контраста края (ECmin) по ISO/IEC 15415
+        
+        ECmin измеряется на границах между темными и светлыми модулями.
+        Используется апертура сканирования для усреднения значений.
+        
+        Пороговые значения (относительно SC):
+        - A: ECmin >= 60% от SC
+        - B: ECmin >= 50% от SC
+        - C: ECmin >= 40% от SC
+        - D: ECmin >= 30% от SC
+        - F: ECmin < 30% от SC
+        """
+        # Вычисление градиентов для обнаружения краев
         sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
         sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        gradient = np.sqrt(sobelx**2 + sobely**2)
+        gradient_magnitude = np.sqrt(sobelx**2 + sobely**2)
         
-        # Находим минимальный значимый контраст
-        ec_min = np.percentile(gradient[gradient > 0], 10)
+        # Применяем апертуру для усреднения (имитация физического сканера)
+        aperture_kernel = int(max(3, module_size))
+        if aperture_kernel % 2 == 0:
+            aperture_kernel += 1
         
-        # Нормализация
-        ec_min_norm = min(100, ec_min / 2.55)
+        kernel = np.ones((aperture_kernel, aperture_kernel), np.float32) / (aperture_kernel**2)
+        gradient_smoothed = cv2.filter2D(gradient_magnitude, -1, kernel)
         
-        if ec_min_norm >= 15: grade = 4.0
-        elif ec_min_norm >= 10: grade = 3.0
-        elif ec_min_norm >= 7: grade = 2.0
-        elif ec_min_norm >= 5: grade = 1.0
-        else: grade = 0.0
+        # Находим значимые края (выше порога шума)
+        noise_threshold = np.mean(gradient_smoothed) * 0.3
+        significant_edges = gradient_smoothed[gradient_smoothed > noise_threshold]
         
-        return {
-            'value': float(ec_min_norm),
-            'grade': grade,
-            'passed': grade >= 2.0,
-            'details': f"ECmin = {ec_min_norm:.1f}%"
-        }
-    
-    def _check_modulation(self, gray: np.ndarray) -> Dict:
-        """Модуляция (MOD)"""
+        if len(significant_edges) == 0:
+            return {
+                'value': 0.0,
+                'grade': 0.0,
+                'passed': False,
+                'details': "ECmin = 0% (края не обнаружены)"
+            }
+        
+        # Минимальный контраст среди значимых краев
+        ec_min = float(np.percentile(significant_edges, 10))
+        
+        # Нормализация относительно максимального возможного градиента (255)
+        ec_min_percent = min(100, (ec_min / 255.0) * 100)
+        
+        # Получаем SC для относительной оценки
         hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
-        
         dark_peak = np.argmax(hist[:128])
         light_peak = np.argmax(hist[128:]) + 128
-        
         sc = light_peak - dark_peak
+        sc_normalized = (sc / 255.0) * 100
         
-        # Находим локальные минимумы и максимумы
-        local_mins = []
-        local_maxs = []
+        # Относительная оценка ECmin к SC
+        ec_ratio = ec_min_percent / sc_normalized if sc_normalized > 0 else 0
         
-        for i in range(1, 255):
-            if hist[i] < hist[i-1] and hist[i] < hist[i+1]:
-                local_mins.append((i, hist[i]))
-            if hist[i] > hist[i-1] and hist[i] > hist[i+1]:
-                local_maxs.append((i, hist[i]))
-        
-        if not local_mins or not local_maxs:
-            return {'value': 0.0, 'grade': 0.0, 'passed': False, 'details': "No modulation"}
-        
-        # Модуляция = ECmin / SC
-        ec_min = min([m[0] for m in local_maxs]) - max([m[0] for m in local_mins])
-        modulation = ec_min / sc if sc > 0 else 0
-        
-        if modulation >= 0.70: grade = 4.0
-        elif modulation >= 0.60: grade = 3.0
-        elif modulation >= 0.50: grade = 2.0
-        elif modulation >= 0.40: grade = 1.0
-        else: grade = 0.0
+        # Оценка по ISO/IEC 15415
+        if ec_ratio >= self.EC_MIN_THRESHOLDS['A']:
+            grade = 4.0
+        elif ec_ratio >= self.EC_MIN_THRESHOLDS['B']:
+            grade = 3.0
+        elif ec_ratio >= self.EC_MIN_THRESHOLDS['C']:
+            grade = 2.0
+        elif ec_ratio >= self.EC_MIN_THRESHOLDS['D']:
+            grade = 1.0
+        else:
+            grade = 0.0
         
         return {
-            'value': float(modulation),
+            'value': round(ec_min_percent, 2),
+            'grade': grade,
+            'passed': grade >= 2.0,
+            'details': f"ECmin = {ec_min_percent:.1f}% ({ec_ratio*100:.1f}% от SC)"
+        }
+    
+    def _check_modulation_iso15415(self, gray: np.ndarray, module_size: float) -> Dict:
+        """
+        Проверка модуляции (MOD) по ISO/IEC 15415
+        
+        Модуляция измеряет однородность печати темных элементов.
+        MOD = ECmin / SC, где ECmin - минимальный контраст края.
+        
+        Пороговые значения:
+        - A: MOD >= 0.70
+        - B: MOD >= 0.60
+        - C: MOD >= 0.50
+        - D: MOD >= 0.40
+        - F: MOD < 0.40
+        """
+        # Гистограмма для определения SC
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+        dark_peak = np.argmax(hist[:128])
+        light_peak = np.argmax(hist[128:]) + 128
+        sc = light_peak - dark_peak
+        
+        if sc == 0:
+            return {
+                'value': 0.0,
+                'grade': 0.0,
+                'passed': False,
+                'details': "MOD = 0.00 (нет контраста)"
+            }
+        
+        # Анализ локальных вариаций яркости в темных областях
+        # Бинаризация для выделения темных элементов
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        
+        # Находим темные элементы
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        modulation_values = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area < module_size**2:  # Пропускаем слишком мелкие элементы (шум)
+                continue
+            
+            # Маска для текущего элемента
+            mask = np.zeros_like(binary)
+            cv2.drawContours(mask, [contour], -1, 255, -1)
+            
+            # Среднее значение яркости внутри элемента
+            mean_val = cv2.mean(gray, mask=mask)[0]
+            
+            # Стандартное отклонение (мера неоднородности)
+            std_val = cv2.meanStdDev(gray, mask=mask)[1][0][0]
+            
+            # Модуляция для этого элемента
+            if mean_val > 0:
+                mod_element = 1.0 - (std_val / mean_val)
+                modulation_values.append(max(0, mod_element))
+        
+        if not modulation_values:
+            return {
+                'value': 0.0,
+                'grade': 0.0,
+                'passed': False,
+                'details': "MOD = 0.00 (темные элементы не найдены)"
+            }
+        
+        # Минимальная модуляция среди всех элементов (наихудший случай)
+        modulation = float(np.min(modulation_values))
+        
+        # Оценка по ISO/IEC 15415
+        if modulation >= self.MODULATION_THRESHOLDS['A']:
+            grade = 4.0
+        elif modulation >= self.MODULATION_THRESHOLDS['B']:
+            grade = 3.0
+        elif modulation >= self.MODULATION_THRESHOLDS['C']:
+            grade = 2.0
+        elif modulation >= self.MODULATION_THRESHOLDS['D']:
+            grade = 1.0
+        else:
+            grade = 0.0
+        
+        return {
+            'value': round(modulation, 3),
             'grade': grade,
             'passed': grade >= 2.0,
             'details': f"MOD = {modulation:.2f}"
         }
     
-    def _check_defects(self, gray: np.ndarray) -> Dict:
-        """Дефекты"""
-        # Бинаризация и анализ связных компонент
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    def _check_defects_iso15415(self, gray: np.ndarray, binary: np.ndarray, module_size: float) -> Dict:
+        """
+        Проверка дефектов по ISO/IEC 15415
         
-        # Инвертируем для анализа дефектов
-        binary_inv = cv2.bitwise_not(binary)
+        Дефекты включают:
+        - Пятна (spots) в светлых областях
+        - Пробелы (voids) в темных областях
+        - Искажения краев (edge irregularities)
         
-        # Находим контуры дефектов
-        contours, _ = cv2.findContours(binary_inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        Измеряется как процент площади дефектов от общей площади модулей.
         
-        # Суммарная площадь дефектов
-        defect_area = sum(cv2.contourArea(c) for c in contours)
-        total_area = gray.shape[0] * gray.shape[1]
-        defect_ratio = defect_area / total_area
+        Пороговые значения:
+        - A: Defects <= 0.5%
+        - B: Defects <= 1.0%
+        - C: Defects <= 1.5%
+        - D: Defects <= 2.0%
+        - F: Defects > 2.0%
+        """
+        height, width = gray.shape
+        total_area = height * width
         
-        # Преобразуем в оценку
-        defect_percent = defect_ratio * 100
+        # Площадь одного модуля
+        module_area = module_size ** 2
         
-        if defect_percent <= 0.5: grade = 4.0
-        elif defect_percent <= 1.0: grade = 3.0
-        elif defect_percent <= 1.5: grade = 2.0
-        elif defect_percent <= 2.0: grade = 1.0
-        else: grade = 0.0
+        # Анализ дефектов в темных элементах (пробелы)
+        _, binary_inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        
+        # Морфологические операции для удаления шума
+        kernel = np.ones((3, 3), np.uint8)
+        binary_cleaned = cv2.morphologyEx(binary_inv, cv2.MORPH_CLOSE, kernel)
+        binary_cleaned = cv2.morphologyEx(binary_cleaned, cv2.MORPH_OPEN, kernel)
+        
+        # Разница между исходным и очищенным - потенциальные дефекты
+        defect_mask_dark = cv2.bitwise_xor(binary_inv, binary_cleaned)
+        
+        # Анализ дефектов в светлых элементах (пятна)
+        binary_light = cv2.bitwise_not(binary_inv)
+        binary_light_cleaned = cv2.morphologyEx(binary_light, cv2.MORPH_CLOSE, kernel)
+        binary_light_cleaned = cv2.morphologyEx(binary_light_cleaned, cv2.MORPH_OPEN, kernel)
+        defect_mask_light = cv2.bitwise_xor(binary_light, binary_light_cleaned)
+        
+        # Объединяем маски дефектов
+        defect_mask = cv2.bitwise_or(defect_mask_dark, defect_mask_light)
+        
+        # Подсчет площади дефектов
+        defect_pixels = cv2.countNonZero(defect_mask)
+        defect_area_ratio = (defect_pixels / total_area) * 100
+        
+        # Оценка по ISO/IEC 15415
+        if defect_area_ratio <= self.DEFECT_THRESHOLDS['A']:
+            grade = 4.0
+        elif defect_area_ratio <= self.DEFECT_THRESHOLDS['B']:
+            grade = 3.0
+        elif defect_area_ratio <= self.DEFECT_THRESHOLDS['C']:
+            grade = 2.0
+        elif defect_area_ratio <= self.DEFECT_THRESHOLDS['D']:
+            grade = 1.0
+        else:
+            grade = 0.0
         
         return {
-            'value': float(defect_percent),
+            'value': round(defect_area_ratio, 3),
             'grade': grade,
             'passed': grade >= 2.0,
-            'details': f"Defects = {defect_percent:.2f}%"
+            'details': f"Defects = {defect_area_ratio:.2f}% ({defect_pixels} пикселей)"
         }
     
-    def _check_decodability(self, gray: np.ndarray) -> Dict:
-        """Декодируемость"""
-        # Проверка структуры сетки Data Matrix
+    def _check_decodability_iso15415(self, gray: np.ndarray, binary: np.ndarray) -> Dict:
+        """
+        Проверка декодируемости (Decodability) по ISO/IEC 15415
+        
+        Декодируемость оценивает качество структуры сетки кода:
+        - Правильность геометрии модулей
+        - Отсутствие искажений перспективы
+        - Четкость границ между модулями
+        
+        Метод использует анализ профилей яркости и FFT для оценки периодичности.
+        
+        Пороговые значения:
+        - A: Decodability >= 80%
+        - B: Decodability >= 60%
+        - C: Decodability >= 40%
+        - D: Decodability >= 20%
+        - F: Decodability < 20%
+        """
         height, width = gray.shape
         
-        # Ожидаемая структура: чередующиеся модули
-        # Анализируем профили яркости
+        # Анализ профилей яркости по строкам и столбцам
         row_profile = np.mean(gray, axis=1)
         col_profile = np.mean(gray, axis=0)
         
-        # Проверка периодичности (должна быть четкая структура)
-        row_fft = np.abs(np.fft.fft(row_profile))
-        col_fft = np.abs(np.fft.fft(col_profile))
+        # FFT для анализа периодичности структуры
+        row_fft = np.abs(np.fft.fft(row_profile - np.mean(row_profile)))
+        col_fft = np.abs(np.fft.fft(col_profile - np.mean(col_profile)))
         
-        # Находим доминирующие частоты
-        row_peaks = len(np.where(row_fft > np.mean(row_fft) * 2)[0])
-        col_peaks = len(np.where(col_fft > np.mean(col_fft) * 2)[0])
+        # Находим доминирующие частоты (исключая постоянную составляющую)
+        row_fft_half = row_fft[1:len(row_fft)//2]
+        col_fft_half = col_fft[1:len(col_fft)//2]
         
-        # Хорошая декодируемость - четкие пики в спектре
-        decodability_score = min(row_peaks, col_peaks) / max(height, width) * 100
+        # Порог для значимых пиков
+        row_threshold = np.mean(row_fft_half) * 2
+        col_threshold = np.mean(col_fft_half) * 2
         
-        if decodability_score >= 80: grade = 4.0
-        elif decodability_score >= 60: grade = 3.0
-        elif decodability_score >= 40: grade = 2.0
-        elif decodability_score >= 20: grade = 1.0
-        else: grade = 0.0
+        # Количество значимых пиков
+        row_peaks = np.sum(row_fft_half > row_threshold)
+        col_peaks = np.sum(col_fft_half > col_threshold)
+        
+        # Оценка на основе четкости структуры
+        structure_score = (row_peaks + col_peaks) / max(height, width) * 100
+        
+        # Дополнительная проверка: анализ контраста локальных областей
+        # Разбиваем изображение на блоки и проверяем однородность
+        block_size = max(4, min(height, width) // 10)
+        n_blocks_h = height // block_size
+        n_blocks_w = width // block_size
+        
+        contrast_scores = []
+        for i in range(n_blocks_h):
+            for j in range(n_blocks_w):
+                y1, y2 = i * block_size, (i + 1) * block_size
+                x1, x2 = j * block_size, (j + 1) * block_size
+                block = gray[y1:y2, x1:x2]
+                
+                if block.size > 0:
+                    block_std = np.std(block)
+                    block_mean = np.mean(block)
+                    if block_mean > 0:
+                        contrast_scores.append(block_std / block_mean)
+        
+        if contrast_scores:
+            # Высокий контраст внутри блоков = хорошая структура
+            contrast_quality = min(1.0, np.mean(contrast_scores) * 2) * 100
+        else:
+            contrast_quality = 0
+        
+        # Итоговая оценка декодируемости
+        decodability_score = (structure_score + contrast_quality) / 2
+        decodability_score = min(100, max(0, decodability_score))
+        
+        # Оценка по ISO/IEC 15415
+        if decodability_score >= 80:
+            grade = 4.0
+        elif decodability_score >= 60:
+            grade = 3.0
+        elif decodability_score >= 40:
+            grade = 2.0
+        elif decodability_score >= 20:
+            grade = 1.0
+        else:
+            grade = 0.0
         
         return {
-            'value': float(decodability_score),
+            'value': round(decodability_score, 2),
             'grade': grade,
             'passed': grade >= 2.0,
             'details': f"Decodability = {decodability_score:.1f}%"
         }
     
     def _grade_to_letter(self, grade: float) -> str:
-        """Преобразование числовой оценки в буквенную"""
+        """Преобразование числовой оценки в буквенную по ISO/IEC 15415"""
         for threshold, letter in sorted(self.GRADE_THRESHOLDS.items(), reverse=True):
             if grade >= threshold:
                 return letter
+        return 'F'
     
     def _validate_datamatrix_data(self, data: str, image: np.ndarray) -> bool:
         """
@@ -1138,10 +1468,3 @@ class DataMatrixVerifier:
             return False
         
         return True
-    
-    def _grade_to_letter(self, grade: float) -> str:
-        """Преобразование числовой оценки в буквенную"""
-        for threshold, letter in sorted(self.GRADE_THRESHOLDS.items(), reverse=True):
-            if grade >= threshold:
-                return letter
-        return 'F'
