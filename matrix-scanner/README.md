@@ -1,73 +1,122 @@
-# React + TypeScript + Vite
+# DataMatrix Quality Scanner
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Веб-приложение для сканирования и анализа качества кодов DataMatrix с оценкой 8 параметров по стандарту ISO/IEC 15415.
 
-Currently, two official plugins are available:
+## Возможности
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+### Реальное сканирование
+- **Сканирование с камеры** - использование веб-камеры устройства для захвата изображения в реальном времени
+- **Загрузка изображений** - поддержка загрузки файлов с изображениями DataMatrix кодов
 
-## React Compiler
+### Анализ 8 параметров качества
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Приложение вычисляет следующие параметры согласно ISO/IEC 15415 и ГОСТ Р 57302-2016:
 
-## Expanding the ESLint configuration
+1. **Decode (Декодирование)** - успешность декодирования данных (0 или 1)
+2. **SC (Symbol Contrast)** - символьный контраст, разница между максимальной и минимальной отражающей способностью
+3. **MOD (Modulation)** - модуляция, оценка однородности отражающей способности внутри модулей
+4. **MRD (Minimum Reflectance Difference)** - минимальная разница отражающей способности между соседними модулями
+5. **AN (Aperture Number)** - номер апертуры (стандартное значение 6mil)
+6. **UEC (Unused Error Correction)** - неиспользованная коррекция ошибок, оценка запаса корректирующей способности
+7. **GN (Grid Nonuniformity)** - неравномерность сетки, оценка геометрических искажений
+8. **FPD (Fixed Pattern Damage)** - повреждение фиксированного паттерна, проверка целостности поисковых и синхронизирующих паттернов
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Шкала оценок
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+Каждый параметр оценивается по шкале от 0 до 4:
+- **A (4)** - Отлично (зеленый)
+- **B (3)** - Хорошо (светло-зеленый)
+- **C (2)** - Удовлетворительно (желтый)
+- **D (1)** - Плохо (оранжевый)
+- **F (0)** - Неудовлетворительно (красный)
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+Общая оценка вычисляется как минимальное значение из всех параметров.
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Установка и запуск
+
+### Требования
+- Node.js 18+
+- npm или yarn
+
+### Установка зависимостей
+
+```bash
+cd matrix-scanner
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Запуск в режиме разработки
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run dev
 ```
+
+Приложение будет доступно по адресу http://localhost:5173
+
+### Сборка production версии
+
+```bash
+npm run build
+```
+
+Собранные файлы появятся в папке `dist`.
+
+### Preview production сборки
+
+```bash
+npm run preview
+```
+
+## Использование
+
+1. **Сканирование с камеры:**
+   - Нажмите кнопку "Начать сканирование"
+   - Разрешите доступ к камере при запросе
+   - Наведите камеру на DataMatrix код
+   - Результаты появятся автоматически после обнаружения кода
+
+2. **Загрузка изображения:**
+   - Нажмите кнопку "Загрузить изображение"
+   - Выберите файл с изображением DataMatrix
+   - Результаты анализа отобразятся на экране
+
+3. **Просмотр результатов:**
+   - Общая оценка показывается в центре в виде цветного круга
+   - 8 параметров качества отображаются в виде карточек
+   - Декодированные данные показываются в текстовом поле
+   - История сканирований сохраняется в нижней части страницы
+
+## Технологии
+
+- **React 19** - библиотека для создания пользовательского интерфейса
+- **TypeScript** - типизация JavaScript кода
+- **Vite** - сборщик и сервер разработки
+- **ZXing** - библиотека для декодирования штрих-кодов
+- **CSS3** - стилизация с использованием Flexbox и Grid
+
+## Структура проекта
+
+```
+matrix-scanner/
+├── src/
+│   ├── App.tsx              # Главный компонент приложения
+│   ├── App.css              # Стили приложения
+│   ├── index.css            # Глобальные стили
+│   ├── types.ts             # TypeScript типы и константы
+│   ├── analyzer.ts          # Класс анализа качества DataMatrix
+│   ├── useDataMatrixScanner.ts  # Хук для работы со сканером
+│   └── main.tsx             # Точка входа приложения
+├── public/                  # Статические файлы
+├── package.json             # Зависимости проекта
+└── tsconfig.json           # Конфигурация TypeScript
+```
+
+## Стандарты
+
+Приложение реализует алгоритмы оценки качества согласно:
+- **ISO/IEC 15415** - международный стандарт оценки качества двумерных штрих-кодов
+- **ГОСТ Р 57302-2016** - российский национальный стандарт
+
+## Лицензия
+
+MIT License
