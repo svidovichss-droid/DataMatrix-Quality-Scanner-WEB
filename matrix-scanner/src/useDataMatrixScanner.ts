@@ -15,7 +15,7 @@ export function useDataMatrixScanner() {
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isProcessingRef = useRef(false);
 
-  // Инициализация сканера с указанием формата DataMatrix
+  // Инициализация сканера с явным указанием формата DataMatrix
   const initializeScanner = useCallback(async () => {
     try {
       const reader = new BrowserMultiFormatReader();
@@ -113,7 +113,7 @@ export function useDataMatrixScanner() {
         isProcessingRef.current = false;
         // DataMatrix не найден в текущем кадре - продолжаем сканирование
         if (isScanning) {
-          scanTimeoutRef.current = setTimeout(processFrame, 200); // Увеличили интервал для стабильности
+          scanTimeoutRef.current = setTimeout(processFrame, 150);
         }
       });
   }, [analyzeQuality, isScanning]);
