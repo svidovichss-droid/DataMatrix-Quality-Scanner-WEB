@@ -15,7 +15,7 @@ export function useDataMatrixScanner() {
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isProcessingRef = useRef(false);
 
-  // Инициализация сканера
+  // Инициализация сканера с указанием формата DataMatrix
   const initializeScanner = useCallback(async () => {
     try {
       const reader = new BrowserMultiFormatReader();
@@ -58,7 +58,7 @@ export function useDataMatrixScanner() {
     return analyzer.analyze();
   }, []);
 
-  // Обработка кадра с помощью ZXing
+  // Обработка кадра с помощью ZXing - непрерывное сканирование
   const processFrame = useCallback(() => {
     if (!videoRef.current || !canvasRef.current || !readerRef.current || isProcessingRef.current) return;
 
@@ -76,6 +76,9 @@ export function useDataMatrixScanner() {
     const ctx = canvas.getContext('2d');
     if (!ctx) {
       isProcessingRef.current = false;
+      if (isScanning) {
+        scanTimeoutRef.current = setTimeout(processFrame, 100);
+      }
       return;
     }
 
@@ -85,7 +88,7 @@ export function useDataMatrixScanner() {
     // Получаем данные изображения
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     
-    // Пытаемся декодировать DataMatrix из URL канваса
+    // Пытаемся декодировать DataMatrix из URL канваса (более надежный метод)
     const dataUrl = canvas.toDataURL('image/png');
     
     readerRef.current.decodeFromImage(dataUrl)
@@ -103,12 +106,14 @@ export function useDataMatrixScanner() {
         
         setScanResult(newResult);
         setError(null);
+        // Останавливаем сканирование после успешного результата
+        stopScanning();
       })
       .catch((_err: unknown) => {
         isProcessingRef.current = false;
         // DataMatrix не найден в текущем кадре - продолжаем сканирование
         if (isScanning) {
-          scanTimeoutRef.current = setTimeout(processFrame, 100);
+          scanTimeoutRef.current = setTimeout(processFrame, 200); // Увеличили интервал для стабильности
         }
       });
   }, [analyzeQuality, isScanning]);
