@@ -13,6 +13,7 @@ export function useDataMatrixScanner() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const readerRef = useRef<BrowserMultiFormatReader | null>(null);
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isProcessingRef = useRef(false);
 
   // Инициализация сканера
   const initializeScanner = useCallback(async () => {
@@ -57,21 +58,26 @@ export function useDataMatrixScanner() {
     return analyzer.analyze();
   }, []);
 
-  // Обработка кадра
+  // Обработка кадра с помощью ZXing
   const processFrame = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current || !readerRef.current) return;
+    if (!videoRef.current || !canvasRef.current || !readerRef.current || isProcessingRef.current) return;
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
     
     if (video.readyState !== 4) return;
 
+    isProcessingRef.current = true;
+
     // Устанавливаем размер канваса равным размеру видео
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) {
+      isProcessingRef.current = false;
+      return;
+    }
 
     // Рисуем текущий кадр
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -79,12 +85,12 @@ export function useDataMatrixScanner() {
     // Получаем данные изображения
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     
-    // Создаем URL из канваса для декодирования
+    // Пытаемся декодировать DataMatrix из URL канваса
     const dataUrl = canvas.toDataURL('image/png');
     
-    // Пытаемся декодировать DataMatrix
     readerRef.current.decodeFromImage(dataUrl)
       .then((result: Result) => {
+        isProcessingRef.current = false;
         // Успешное декодирование
         const parameters = analyzeQuality(imageData);
         
@@ -99,6 +105,7 @@ export function useDataMatrixScanner() {
         setError(null);
       })
       .catch((_err: unknown) => {
+        isProcessingRef.current = false;
         // DataMatrix не найден в текущем кадре - продолжаем сканирование
         if (isScanning) {
           scanTimeoutRef.current = setTimeout(processFrame, 100);
