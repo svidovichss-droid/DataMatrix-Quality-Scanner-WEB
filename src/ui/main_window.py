@@ -588,14 +588,23 @@ class MainWindow(QMainWindow):
             self.current_frame = frame.copy()
             
             # Инспекция если включена
+            detected_codes = []
             if self.is_inspecting and self.analyzer:
                 try:
                     results = self.analyzer.process_frame(frame)
+                    # Сохраняем обнаруженные коды для визуализации
+                    for result in results:
+                        detected_codes.append({
+                            'position': result.position,
+                            'data': result.barcode_data,
+                            'grade': result.quality_grades['overall']['grade_letter'],
+                            'passed': result.passed
+                        })
                 except Exception as e:
                     logger.error(f"Ошибка при анализе кадра: {e}", exc_info=True)
                     
-            # Отображение
-            display_frame = frame.copy()
+            # Отображение с визуализацией найденных кодов
+            display_frame = self._draw_detection_overlay(frame.copy(), detected_codes)
             
             # Добавляем оверлей с информацией
             if self.is_inspecting:
@@ -621,6 +630,43 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Ошибка при отображении кадра: {e}", exc_info=True)
             self._on_camera_error(f"Ошибка обработки кадра: {e}")
+    
+    def _draw_detection_overlay(self, frame: np.ndarray, detected_codes: list) -> np.ndarray:
+        """Отрисовка рамок и информации о найденных Data Matrix кодах"""
+        for code in detected_codes:
+            x, y = code['position']
+            data = code['data']
+            grade = code['grade']
+            passed = code['passed']
+            
+            # Цвет рамки в зависимости от качества
+            color_map = {
+                'A': (0, 255, 0),      # Зеленый
+                'B': (100, 255, 100),  # Светло-зеленый
+                'C': (0, 255, 255),    # Желтый
+                'D': (0, 165, 255),    # Оранжевый
+                'F': (0, 0, 255)       # Красный
+            }
+            color = color_map.get(grade, (0, 0, 255))
+            
+            # Рисуем рамку вокруг кода (круг радиусом 40 пикселей)
+            radius = 40
+            cv2.circle(frame, (x, y), radius, color, 2)
+            
+            # Рисуем точку в центре
+            cv2.circle(frame, (x, y), 5, color, -1)
+            
+            # Подпись с данными и оценкой
+            label = f"{grade} | {data[:20]}..." if len(data) > 20 else f"{grade} | {data}"
+            status = "PASS" if passed else "FAIL"
+            full_label = f"{label} [{status}]"
+            
+            # Позиция текста над рамкой
+            text_y = y - radius - 10
+            cv2.putText(frame, full_label, (x - 150, text_y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        
+        return frame
         
     def _on_fps_updated(self, fps: float):
         """Обновление FPS"""
