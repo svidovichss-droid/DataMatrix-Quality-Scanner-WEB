@@ -438,14 +438,13 @@ class DataMatrixDecoder:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
         
         try:
-            # Декодируем - pyzbar по умолчанию декодирует все типы включая DataMatrix
-            # Не указываем symbols чтобы декодировать все типы
+            # Декодируем все типы - pyzbar автоматически определяет DataMatrix
+            # ZBarSymbol не имеет отдельного DATAMATRIX, но pyzbar возвращает type='DATAMATRIX'
             decoded_objects = pyzbar.decode(gray)
             
             for obj in decoded_objects:
-                # pyzbar возвращает type='DATAMATRIX' для Data Matrix кодов
-                # Также проверяем на 'DATABAR' который может содержать DataMatrix
-                if obj.type in ['DATAMATRIX']:
+                # Фильтруем только DataMatrix коды по типу
+                if obj.type == 'DATAMATRIX':
                     # Получаем bounding box
                     points = obj.polygon
                     if points:
@@ -476,12 +475,12 @@ class DataMatrixDecoder:
         # Пробуем разные варианты изображения
         for img in [gray, preprocessed, cv2.bitwise_not(preprocessed)]:
             try:
-                # Декодируем - pyzbar по умолчанию декодирует все типы включая DataMatrix
+                # Декодируем все типы - pyzbar автоматически определяет DataMatrix
                 decoded_objects = pyzbar.decode(img)
                 
                 for obj in decoded_objects:
-                    # Проверяем что это DataMatrix
-                    if obj.data and obj.type == 'DATAMATRIX':
+                    # Проверяем что это DataMatrix и данные успешно декодированы
+                    if obj.type == 'DATAMATRIX' and obj.data:
                         points = obj.polygon
                         if points:
                             pts = np.array([(p.x, p.y) for p in points], dtype=np.int32)
@@ -517,12 +516,12 @@ class DataMatrixDecoder:
         # Пробуем разные варианты изображения
         for img in [gray, preprocessed, cv2.bitwise_not(preprocessed)]:
             try:
-                # Декодируем - pyzbar по умолчанию декодирует все типы включая DataMatrix
+                # Декодируем все типы - pyzbar автоматически определяет DataMatrix
                 decoded_objects = pyzbar.decode(img)
                 
                 for obj in decoded_objects:
-                    # Проверяем что это DataMatrix
-                    if obj.data and obj.type == 'DATAMATRIX':
+                    # Проверяем что это DataMatrix и данные успешно декодированы
+                    if obj.type == 'DATAMATRIX' and obj.data:
                         points = obj.polygon
                         if points:
                             pts = np.array([(p.x, p.y) for p in points], dtype=np.int32)
@@ -609,7 +608,12 @@ class DataMatrixDecoder:
             cv2.THRESH_BINARY, 15, 5
         )
         
-        return binary
+        # Морфологические операции для улучшения качества бинарного изображения
+        kernel_morph = np.ones((3, 3), np.uint8)
+        dilated = cv2.dilate(binary, kernel_morph, iterations=1)
+        eroded = cv2.erode(dilated, kernel_morph, iterations=1)
+        
+        return eroded
     
     def _non_max_suppression(self, detections: List[Dict], iou_threshold: float = 0.5) -> List[Dict]:
         """
