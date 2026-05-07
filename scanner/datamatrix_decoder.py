@@ -202,9 +202,11 @@ class DataMatrixDecoder:
         
         # Предобработка для улучшения детектирования
         preprocessed = self._preprocess(frame)
+        preprocessed_aggressive = self._preprocess_aggressive(frame)
         
         # Попытка детектирования с разными препроцессорами и параметрами shrink
-        for img in [frame, preprocessed, cv2.bitwise_not(preprocessed)]:
+        for img in [frame, preprocessed, preprocessed_aggressive, 
+                    cv2.bitwise_not(preprocessed), cv2.bitwise_not(preprocessed_aggressive)]:
             # Пробуем разные уровни shrink - от 1 до 5 для лучшего захвата
             for shrink in [1, 2, 3, 4, 5]:
                 try:
@@ -236,9 +238,11 @@ class DataMatrixDecoder:
         """Декодирование захваченной области с помощью pylibdmtx"""
         # Предобработка для улучшения декодирования
         preprocessed = self._preprocess(region)
+        preprocessed_aggressive = self._preprocess_aggressive(region)
         
         # Попытка декодирования с разными препроцессорами и параметрами shrink
-        for img in [region, preprocessed, cv2.bitwise_not(preprocessed)]:
+        for img in [region, preprocessed, preprocessed_aggressive,
+                    cv2.bitwise_not(preprocessed), cv2.bitwise_not(preprocessed_aggressive)]:
             # Пробуем разные уровни shrink - от 1 до 5 для лучшего захвата
             for shrink in [1, 2, 3, 4, 5]:
                 try:
@@ -270,9 +274,11 @@ class DataMatrixDecoder:
         
         # Предобработка для улучшения декодирования
         preprocessed = self._preprocess(frame)
+        preprocessed_aggressive = self._preprocess_aggressive(frame)
         
         # Попытка декодирования с разными препроцессорами и параметрами shrink
-        for img in [frame, preprocessed, cv2.bitwise_not(preprocessed)]:
+        for img in [frame, preprocessed, preprocessed_aggressive,
+                    cv2.bitwise_not(preprocessed), cv2.bitwise_not(preprocessed_aggressive)]:
             # Пробуем разные уровни shrink - от 1 до 5 для лучшего захвата
             for shrink in [1, 2, 3, 4, 5]:
                 try:
@@ -471,9 +477,11 @@ class DataMatrixDecoder:
         
         # Предобработка для улучшения декодирования
         preprocessed = self._preprocess(region)
+        preprocessed_aggressive = self._preprocess_aggressive(region)
         
         # Пробуем разные варианты изображения
-        for img in [gray, preprocessed, cv2.bitwise_not(preprocessed)]:
+        for img in [gray, preprocessed, preprocessed_aggressive,
+                    cv2.bitwise_not(preprocessed), cv2.bitwise_not(preprocessed_aggressive)]:
             try:
                 # Декодируем все типы - pyzbar автоматически определяет DataMatrix
                 decoded_objects = pyzbar.decode(img)
@@ -512,9 +520,11 @@ class DataMatrixDecoder:
         
         # Предобработка для улучшения декодирования
         preprocessed = self._preprocess(frame)
+        preprocessed_aggressive = self._preprocess_aggressive(frame)
         
         # Пробуем разные варианты изображения
-        for img in [gray, preprocessed, cv2.bitwise_not(preprocessed)]:
+        for img in [gray, preprocessed, preprocessed_aggressive,
+                    cv2.bitwise_not(preprocessed), cv2.bitwise_not(preprocessed_aggressive)]:
             try:
                 # Декодируем все типы - pyzbar автоматически определяет DataMatrix
                 decoded_objects = pyzbar.decode(img)
@@ -612,6 +622,27 @@ class DataMatrixDecoder:
         kernel_morph = np.ones((3, 3), np.uint8)
         dilated = cv2.dilate(binary, kernel_morph, iterations=1)
         eroded = cv2.erode(dilated, kernel_morph, iterations=1)
+        
+        return eroded
+    
+    def _preprocess_aggressive(self, frame: np.ndarray) -> np.ndarray:
+        """Агрессивная предобработка для сложных случаев"""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+        
+        # Сильное размытие для удаления шума
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
+        # CLAHE для улучшения локального контраста
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(blurred)
+        
+        # Бинаризация Оцу
+        _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # Морфологические операции
+        kernel = np.ones((3, 3), np.uint8)
+        dilated = cv2.dilate(binary, kernel, iterations=2)
+        eroded = cv2.erode(dilated, kernel, iterations=1)
         
         return eroded
     
