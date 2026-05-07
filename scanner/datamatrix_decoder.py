@@ -443,28 +443,35 @@ class DataMatrixDecoder:
         # Конвертируем в оттенки серого если нужно
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
         
+        # Предобработка для улучшения детектирования
+        preprocessed = self._preprocess(frame)
+        preprocessed_aggressive = self._preprocess_aggressive(frame)
+        
         try:
-            # Декодируем все типы - pyzbar автоматически определяет DataMatrix
-            # ZBarSymbol не имеет отдельного DATAMATRIX, но pyzbar возвращает type='DATAMATRIX'
-            decoded_objects = pyzbar.decode(gray)
-            
-            for obj in decoded_objects:
-                # Фильтруем только DataMatrix коды по типу
-                if obj.type == 'DATAMATRIX':
-                    # Получаем bounding box
-                    points = obj.polygon
-                    if points:
-                        pts = np.array([(p.x, p.y) for p in points], dtype=np.int32)
-                        x, y, w, h = cv2.boundingRect(pts)
-                        
-                        result = {
-                            'rect': (x, y, w, h),
-                            'polygon': pts,
-                            'timestamp': cv2.getTickCount()
-                        }
-                        # Проверка на дубликаты по позиции
-                        if not any(r['rect'] == result['rect'] for r in results):
-                            results.append(result)
+            # Пробуем разные варианты изображения для лучшего обнаружения
+            for img in [gray, preprocessed, preprocessed_aggressive,
+                        cv2.bitwise_not(preprocessed), cv2.bitwise_not(preprocessed_aggressive)]:
+                # Декодируем все типы - pyzbar автоматически определяет DataMatrix
+                # Используем decode без параметров symbols для поддержки DataMatrix
+                decoded_objects = pyzbar.decode(img)
+                
+                for obj in decoded_objects:
+                    # Фильтруем только DataMatrix коды по типу
+                    if obj.type == 'DATAMATRIX':
+                        # Получаем bounding box
+                        points = obj.polygon
+                        if points:
+                            pts = np.array([(p.x, p.y) for p in points], dtype=np.int32)
+                            x, y, w, h = cv2.boundingRect(pts)
+                            
+                            result = {
+                                'rect': (x, y, w, h),
+                                'polygon': pts,
+                                'timestamp': cv2.getTickCount()
+                            }
+                            # Проверка на дубликаты по позиции
+                            if not any(r['rect'] == result['rect'] for r in results):
+                                results.append(result)
         except Exception as e:
             logger.warning(f"Ошибка pyzbar detect: {e}")
             
