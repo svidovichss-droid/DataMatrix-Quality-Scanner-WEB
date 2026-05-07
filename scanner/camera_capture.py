@@ -41,16 +41,29 @@ class CameraCapture:
         
     def open(self) -> bool:
         """Открытие камеры"""
-        self.cap = cv2.VideoCapture(self.camera_id, cv2.CAP_DSHOW)
+        # Определяем подходящий бэкенд для текущей платформы
+        import platform
+        system = platform.system()
         
-        if not self.cap.isOpened():
-            # Пробуем другие бэкенды
-            for backend in [cv2.CAP_ANY, cv2.CAP_V4L2, cv2.CAP_MSMF]:
+        if system == "Windows":
+            backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY, cv2.CAP_V4L2]
+        elif system == "Linux":
+            backends = [cv2.CAP_V4L2, cv2.CAP_ANY, cv2.CAP_FFMPEG]
+        else:  # macOS и другие
+            backends = [cv2.CAP_ANY, cv2.CAP_AVFOUNDATION, cv2.CAP_FFMPEG]
+        
+        # Пробуем открыть камеру с разными бэкендами
+        for backend in backends:
+            try:
                 self.cap = cv2.VideoCapture(self.camera_id, backend)
                 if self.cap.isOpened():
+                    logger.info(f"Камера открыта с бэкендом {backend}")
                     break
+            except Exception as e:
+                logger.warning(f"Бэкенд {backend} не подошел: {e}")
+                continue
         
-        if not self.cap.isOpened():
+        if not self.cap or not self.cap.isOpened():
             logger.error(f"Не удалось открыть камеру {self.camera_id}")
             return False
             

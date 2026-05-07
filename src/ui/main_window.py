@@ -132,6 +132,7 @@ class MainWindow(QMainWindow):
         
         self._setup_ui()
         self._setup_timer()
+        self._scan_cameras()  # Сканирование доступных камер при запуске
         
     def _setup_ui(self):
         """Настройка интерфейса"""
@@ -443,10 +444,55 @@ class MainWindow(QMainWindow):
         self.stats_timer.timeout.connect(self._update_stats)
         self.stats_timer.start(1000)  # Обновление каждую секунду
         
+    def _scan_cameras(self):
+        """Сканирование доступных камер"""
+        import cv2
+        import platform
+        
+        self.camera_combo.clear()
+        found_cameras = []
+        
+        # Пробуем найти камеры (до 10 возможных индексов)
+        for i in range(10):
+            try:
+                # Определяем бэкенд для платформы
+                system = platform.system()
+                if system == "Windows":
+                    cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+                elif system == "Linux":
+                    cap = cv2.VideoCapture(i, cv2.CAP_V4L2)
+                else:
+                    cap = cv2.VideoCapture(i, cv2.CAP_ANY)
+                
+                if cap.isOpened():
+                    # Получаем информацию о камере
+                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    cap.release()
+                    
+                    found_cameras.append(i)
+                    self.camera_combo.addItem(f"Камера {i} ({width}x{height})", i)
+                    logger.info(f"Найдена камера {i}: {width}x{height}")
+            except Exception as e:
+                logger.debug(f"Камера {i} недоступна: {e}")
+                continue
+        
+        if not found_cameras:
+            # Если камеры не найдены, добавляем заглушку
+            self.camera_combo.addItem("Камеры не найдены", -1)
+            self.btn_connect.setEnabled(False)
+            self._log("Камеры не обнаружены. Проверьте подключение.")
+        else:
+            self._log(f"Найдено камер: {len(found_cameras)}")
+            
     def _on_connect(self):
         """Подключение камеры"""
         try:
-            camera_id = self.camera_combo.currentIndex()
+            camera_id = self.camera_combo.currentData()
+            
+            if camera_id is None or camera_id < 0:
+                QMessageBox.warning(self, "Ошибка", "Выберите камеру из списка")
+                return
             
             # Парсинг разрешения
             res_text = self.res_combo.currentText()
